@@ -30,13 +30,12 @@ If you control a separate website or game server, you can connect that system yo
   - their user ID is listed in `OWNER_USER_IDS`
   - they have a role listed in `MOD_ROLE_IDS`
   - they already have the matching Discord permission for that command
-- Global moderation commands now use `Ban Members` as the baseline permission instead of `Administrator`.
+- Commands are intentionally left visible in Discord, and the bot enforces access at runtime. This is required so `MOD_ROLE_IDS` can grant access even when a role does not have the native Discord permission bit.
 - Command permission mapping:
   - `gban`, `ungban`, `gbanlist`, `syncgbans`, `ban`: `Ban Members`
   - `kick`: `Kick Members`
   - `timeout`: `Moderate Members`
   - `purge`: `Manage Messages`
-- If your custom mod role does not have those built-in Discord permissions, add a command overwrite for that role in Discord's app command permissions so the commands show up in the slash command picker.
 
 ## Hosting
 

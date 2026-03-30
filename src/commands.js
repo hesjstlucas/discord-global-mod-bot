@@ -458,7 +458,6 @@ export const commands = [
   new SlashCommandBuilder()
     .setName("gban")
     .setDescription("Globally ban a user across every server this bot is in.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
     .setDMPermission(false)
     .addUserOption((option) =>
       option.setName("user").setDescription("User to globally ban").setRequired(true),
@@ -469,7 +468,6 @@ export const commands = [
   new SlashCommandBuilder()
     .setName("ungban")
     .setDescription("Remove a user ID from the global ban list and unban them.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
     .setDMPermission(false)
     .addStringOption((option) =>
       option
@@ -486,17 +484,14 @@ export const commands = [
   new SlashCommandBuilder()
     .setName("gbanlist")
     .setDescription("Show stored global bans.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
     .setDMPermission(false),
   new SlashCommandBuilder()
     .setName("syncgbans")
     .setDescription("Re-apply all stored global bans to all servers.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
     .setDMPermission(false),
   new SlashCommandBuilder()
     .setName("ban")
     .setDescription("Ban a user from this server.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
     .setDMPermission(false)
     .addUserOption((option) =>
       option.setName("user").setDescription("User to ban").setRequired(true),
@@ -507,7 +502,6 @@ export const commands = [
   new SlashCommandBuilder()
     .setName("kick")
     .setDescription("Kick a user from this server.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers)
     .setDMPermission(false)
     .addUserOption((option) =>
       option.setName("user").setDescription("User to kick").setRequired(true),
@@ -518,7 +512,6 @@ export const commands = [
   new SlashCommandBuilder()
     .setName("timeout")
     .setDescription("Timeout a user in this server.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
     .setDMPermission(false)
     .addUserOption((option) =>
       option.setName("user").setDescription("User to timeout").setRequired(true),
@@ -535,7 +528,6 @@ export const commands = [
   new SlashCommandBuilder()
     .setName("purge")
     .setDescription("Bulk delete recent messages in this channel.")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
     .setDMPermission(false)
     .addIntegerOption((option) =>
       option
