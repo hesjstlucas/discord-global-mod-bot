@@ -10,6 +10,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
+from depcmds import DepartmentRegistry, register_department_commands
 
 load_dotenv()
 
@@ -26,6 +27,7 @@ PERMISSION_LABELS = {
     "kick_members": "Kick Members",
     "moderate_members": "Moderate Members",
     "manage_messages": "Manage Messages",
+    "manage_roles": "Manage Roles",
 }
 
 
@@ -187,6 +189,7 @@ class BotConfig:
     mod_role_ids: set[int]
     global_ban_guild_ids: set[int]
     global_message_channel_map: dict[int, int]
+    departments_config_path: Path
     data_file_path: Path
 
     @classmethod
@@ -203,6 +206,10 @@ class BotConfig:
             global_ban_guild_ids=split_csv(os.getenv("GLOBAL_BAN_GUILD_IDS", "")),
             global_message_channel_map=parse_guild_channel_map(
                 os.getenv("GLOBAL_MESSAGE_CHANNEL_MAP", "")
+            ),
+            departments_config_path=Path(
+                os.getenv("DEPARTMENTS_CONFIG_PATH", "departments.json").strip()
+                or "departments.json"
             ),
             data_file_path=Path(
                 os.getenv("DATA_FILE_PATH", "data/moderation-store.json").strip()
@@ -268,6 +275,9 @@ class GlobalModBot(commands.Bot):
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.config = config
         self.store = store
+        self.department_registry = DepartmentRegistry.from_path(
+            config.departments_config_path
+        )
         self._commands_registered = False
         self.tree.on_error = self.on_app_command_error
 
@@ -330,6 +340,8 @@ class GlobalModBot(commands.Bot):
             await interaction.response.send_message(message, ephemeral=True)
 
     def register_commands(self) -> None:
+        register_department_commands(self)
+
         @self.tree.command(name="gban", description="Globally ban a user across every server this bot is in.")
         @app_commands.guild_only()
         @app_commands.describe(user="User to globally ban", reason="Reason for the global ban")
