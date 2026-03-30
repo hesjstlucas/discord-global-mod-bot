@@ -107,6 +107,19 @@ def summarize_results(results: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def format_target_scope(targeted_guilds: list[discord.Guild], missing_guild_ids: list[int]) -> str:
+    lines = [f"Targeted {len(targeted_guilds)} server(s)."]
+
+    if missing_guild_ids:
+        missing = ", ".join(str(guild_id) for guild_id in missing_guild_ids[:10])
+        suffix = "..." if len(missing_guild_ids) > 10 else ""
+        lines.append(
+            f"Could not reach {len(missing_guild_ids)} configured server(s): {missing}{suffix}"
+        )
+
+    return "\n".join(lines)
+
+
 def format_ban_list(entries: list[dict]) -> str:
     if not entries:
         return "No global bans are stored yet."
@@ -131,6 +144,7 @@ class BotConfig:
     register_guild_id: Optional[int]
     owner_user_ids: set[int]
     mod_role_ids: set[int]
+    global_ban_guild_ids: set[int]
     data_file_path: Path
 
     @classmethod
@@ -144,6 +158,7 @@ class BotConfig:
             ),
             owner_user_ids=split_csv(os.getenv("OWNER_USER_IDS", "")),
             mod_role_ids=split_csv(os.getenv("MOD_ROLE_IDS", "")),
+            global_ban_guild_ids=split_csv(os.getenv("GLOBAL_BAN_GUILD_IDS", "")),
             data_file_path=Path(
                 os.getenv("DATA_FILE_PATH", "data/moderation-store.json").strip()
                 or "data/moderation-store.json"
@@ -233,6 +248,9 @@ class GlobalModBot(commands.Bot):
         print(f"Logged in as {self.user} in {len(self.guilds)} guild(s).")
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
+        if self.config.global_ban_guild_ids and guild.id not in self.config.global_ban_guild_ids:
+            return
+
         results = []
         for entry in self.store.list_global_bans():
             results.append(await self.apply_global_ban_to_guild(guild, int(entry["user_id"]), entry))
@@ -243,6 +261,9 @@ class GlobalModBot(commands.Bot):
         )
 
     async def on_member_join(self, member: discord.Member) -> None:
+        if self.config.global_ban_guild_ids and member.guild.id not in self.config.global_ban_guild_ids:
+            return
+
         entry = self.store.get_global_ban(member.id)
         if entry is None:
             return
@@ -282,14 +303,20 @@ class GlobalModBot(commands.Bot):
             }
             already_banned = self.store.get_global_ban(user.id) is not None
             self.store.set_global_ban(user.id, entry)
-            results = await self.apply_global_ban_everywhere(user.id, entry)
+            results, targeted_guilds, missing_guild_ids = await self.apply_global_ban_everywhere(
+                user.id, entry
+            )
             prefix = (
                 f"Updated the global ban for <@{user.id}>."
                 if already_banned
                 else f"Added <@{user.id}> to the global ban list."
             )
             await interaction.edit_original_response(
-                content=f"{prefix}\n\n{summarize_results(results)}"
+                content=(
+                    f"{prefix}\n\n"
+                    f"{format_target_scope(targeted_guilds, missing_guild_ids)}\n"
+                    f"{summarize_results(results)}"
+                )
             )
 
         @self.tree.command(name="ungban", description="Remove a user ID from the global ban list and unban them.")
@@ -315,9 +342,15 @@ class GlobalModBot(commands.Bot):
                 return
 
             unban_reason = f"Global unban by {interaction.user.id} | {normalize_reason(reason)}"[:512]
-            results = await self.lift_global_ban_everywhere(int(user_id), unban_reason)
+            results, targeted_guilds, missing_guild_ids = await self.lift_global_ban_everywhere(
+                int(user_id), unban_reason
+            )
             await interaction.edit_original_response(
-                content=f"Removed `{user_id}` from the global ban list.\n\n{summarize_results(results)}"
+                content=(
+                    f"Removed `{user_id}` from the global ban list.\n\n"
+                    f"{format_target_scope(targeted_guilds, missing_guild_ids)}\n"
+                    f"{summarize_results(results)}"
+                )
             )
 
         @self.tree.command(name="gbanlist", description="Show stored global bans.")
@@ -345,10 +378,19 @@ class GlobalModBot(commands.Bot):
 
             results = []
             for entry in entries:
-                results.extend(await self.apply_global_ban_everywhere(int(entry["user_id"]), entry))
+                batch_results, _, _ = await self.apply_global_ban_everywhere(
+                    int(entry["user_id"]), entry
+                )
+                results.extend(batch_results)
+
+            targeted_guilds, missing_guild_ids = self.get_target_guilds()
 
             await interaction.edit_original_response(
-                content=f"Re-applied {len(entries)} stored global ban(s).\n\n{summarize_results(results)}"
+                content=(
+                    f"Re-applied {len(entries)} stored global ban(s).\n\n"
+                    f"{format_target_scope(targeted_guilds, missing_guild_ids)}\n"
+                    f"{summarize_results(results)}"
+                )
             )
 
         @self.tree.command(name="ban", description="Ban a user from this server.")
@@ -575,17 +617,40 @@ class GlobalModBot(commands.Bot):
                 "reason": summarize_exception(error),
             }
 
-    async def apply_global_ban_everywhere(self, user_id: int, entry: dict) -> list[dict]:
+    async def apply_global_ban_everywhere(
+        self, user_id: int, entry: dict
+    ) -> tuple[list[dict], list[discord.Guild], list[int]]:
         results = []
-        for guild in self.guilds:
+        target_guilds, missing_guild_ids = self.get_target_guilds()
+        for guild in target_guilds:
             results.append(await self.apply_global_ban_to_guild(guild, user_id, entry))
-        return results
+        return results, target_guilds, missing_guild_ids
 
-    async def lift_global_ban_everywhere(self, user_id: int, reason: str) -> list[dict]:
+    async def lift_global_ban_everywhere(
+        self, user_id: int, reason: str
+    ) -> tuple[list[dict], list[discord.Guild], list[int]]:
         results = []
-        for guild in self.guilds:
+        target_guilds, missing_guild_ids = self.get_target_guilds()
+        for guild in target_guilds:
             results.append(await self.lift_global_ban_from_guild(guild, user_id, reason))
-        return results
+        return results, target_guilds, missing_guild_ids
+
+    def get_target_guilds(self) -> tuple[list[discord.Guild], list[int]]:
+        if not self.config.global_ban_guild_ids:
+            return list(self.guilds), []
+
+        available_guilds = {guild.id: guild for guild in self.guilds}
+        target_guilds = [
+            available_guilds[guild_id]
+            for guild_id in self.config.global_ban_guild_ids
+            if guild_id in available_guilds
+        ]
+        missing_guild_ids = [
+            guild_id
+            for guild_id in self.config.global_ban_guild_ids
+            if guild_id not in available_guilds
+        ]
+        return target_guilds, missing_guild_ids
 
 
 def main() -> None:

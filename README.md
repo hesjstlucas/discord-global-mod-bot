@@ -79,6 +79,7 @@ CLIENT_ID=your-application-client-id
 REGISTER_GUILD_ID=
 OWNER_USER_IDS=
 MOD_ROLE_IDS=
+GLOBAL_BAN_GUILD_IDS=
 DATA_FILE_PATH=/app/data/moderation-store.json
 ```
 
@@ -99,3 +100,4 @@ Then:
 - The bot can only ban, unban, kick, or timeout where its role is high enough.
 - Timeout duration format examples: `10m`, `2h`, `3d`.
 - Purge skips messages older than 14 days because Discord bulk delete does.
+- `GLOBAL_BAN_GUILD_IDS` can contain comma-separated server IDs. If set, global ban commands only apply to those servers.
