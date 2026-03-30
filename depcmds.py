@@ -264,6 +264,37 @@ async def autocomplete_department(
     return bot.department_registry.autocomplete(current)
 
 
+async def autocomplete_department_role(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    bot = interaction.client
+    if not isinstance(bot, discord.Client) or not hasattr(bot, "department_registry"):
+        return []
+
+    department_value = getattr(interaction.namespace, "department", "")
+    if not isinstance(department_value, str) or not department_value.strip():
+        return []
+
+    department = bot.department_registry.get(department_value)
+    if department is None or interaction.guild is None:
+        return []
+
+    matches = []
+    current_lower = current.strip().lower()
+
+    for role_id in sorted(department.promotion_role_ids):
+        role = interaction.guild.get_role(role_id)
+        if role is None:
+            continue
+
+        if current_lower and current_lower not in role.name.lower():
+            continue
+
+        matches.append(app_commands.Choice(name=role.name[:100], value=str(role.id)))
+
+    return matches[:25]
+
+
 def register_department_commands(bot: GlobalModBot) -> None:
     dep_group = app_commands.Group(name="dep", description="Department moderation commands")
 
@@ -529,12 +560,15 @@ def register_department_commands(bot: GlobalModBot) -> None:
         role="Department role to assign",
         reason="Reason for the promotion",
     )
-    @app_commands.autocomplete(department=autocomplete_department)
+    @app_commands.autocomplete(
+        department=autocomplete_department,
+        role=autocomplete_department_role,
+    )
     async def dep_promote(
         interaction: discord.Interaction,
         member: discord.Member,
         department: str,
-        role: discord.Role,
+        role: str,
         reason: str,
     ) -> None:
         if not await bot.ensure_access(interaction, "manage_roles"):
@@ -544,10 +578,25 @@ def register_department_commands(bot: GlobalModBot) -> None:
         if dept is None:
             return
 
-        if role.id not in dept.promotion_role_ids:
+        if not role.isdigit():
             await bot.send_ephemeral(
                 interaction,
-                f"{role.name} is not an allowed promotion role for {dept.label}.",
+                "Choose a role from the department role suggestions.",
+            )
+            return
+
+        resolved_role = interaction.guild.get_role(int(role))
+        if resolved_role is None:
+            await bot.send_ephemeral(
+                interaction,
+                "That department role no longer exists in this server.",
+            )
+            return
+
+        if resolved_role.id not in dept.promotion_role_ids:
+            await bot.send_ephemeral(
+                interaction,
+                f"{resolved_role.name} is not an allowed promotion role for {dept.label}.",
             )
             return
 
@@ -558,17 +607,17 @@ def register_department_commands(bot: GlobalModBot) -> None:
             )
             return
 
-        if not bot_can_manage_role(member.guild, role):
+        if not bot_can_manage_role(member.guild, resolved_role):
             await bot.send_ephemeral(
                 interaction,
-                f"I cannot assign the role `{role.name}`.",
+                f"I cannot assign the role `{resolved_role.name}`.",
             )
             return
 
         roles_to_remove = [
             current_role
             for current_role in member.roles
-            if current_role.id in dept.promotion_role_ids and current_role.id != role.id
+            if current_role.id in dept.promotion_role_ids and current_role.id != resolved_role.id
         ]
         unmanageable = collect_unmanageable_roles(member.guild, roles_to_remove)
         if unmanageable:
@@ -583,8 +632,8 @@ def register_department_commands(bot: GlobalModBot) -> None:
 
         if roles_to_remove:
             await member.remove_roles(*roles_to_remove, reason=audit_reason)
-        if role not in member.roles:
-            await member.add_roles(role, reason=audit_reason)
+        if resolved_role not in member.roles:
+            await member.add_roles(resolved_role, reason=audit_reason)
 
         embed = build_department_embed(
             title="Department Promotion",
@@ -594,7 +643,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
             moderator=interaction.user,
             reason=reason,
         )
-        embed.add_field(name="Assigned Role", value=role.name, inline=False)
+        embed.add_field(name="Assigned Role", value=resolved_role.name, inline=False)
         if roles_to_remove:
             embed.add_field(
                 name="Removed Previous Roles",
@@ -608,7 +657,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
         if dept.log_channel_id is not None and dept.log_channel_id != dept.promotion_channel_id:
             await send_embed_to_channel(member.guild, dept.log_channel_id, embed)
 
-        message = f"Promoted {member.mention} in {dept.label} to {role.name}."
+        message = f"Promoted {member.mention} in {dept.label} to {resolved_role.name}."
         if roles_to_remove:
             message += f"\nRemoved previous roles: {format_role_names(roles_to_remove)}."
         if channel_error is not None:

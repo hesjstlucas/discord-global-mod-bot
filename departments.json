@@ -1,3 +1,96 @@
 {
-  "departments": {}
+  "departments": {
+    "okcpd": {
+      "label": "OKCPD",
+      "guild_id": 1470280307335889039,
+      "member_role_ids": [111111111111111111],
+      "promotion_role_ids": [222222222222222222, 333333333333333333],
+      "managed_role_ids": [444444444444444444],
+      "log_channel_id": 555555555555555555,
+      "promotion_channel_id": 666666666666666666,
+      "ban_role_id": 777777777777777777,
+      "termination_floor_role_id": 111111111111111111
+    },
+    "ohp": {
+      "label": "OKCHP",
+      "guild_id": 1485378471583678664,
+      "member_role_ids": [888888888888888888],
+      "promotion_role_ids": [999999999999999999],
+      "managed_role_ids": [],
+      "log_channel_id": 101010101010101010,
+      "promotion_channel_id": 202020202020202020,
+      "ban_role_id": 303030303030303030,
+      "termination_floor_role_id": 888888888888888888
+    },
+    "ocs": {
+      "label": "OKCSO",
+      "guild_id": 1226734324620070963,
+      "member_role_ids": [111111111111111111],
+      "promotion_role_ids": [222222222222222222, 333333333333333333],
+      "managed_role_ids": [444444444444444444],
+      "log_channel_id": 555555555555555555,
+      "promotion_channel_id": 666666666666666666,
+      "ban_role_id": 777777777777777777,
+      "termination_floor_role_id": 111111111111111111
+    },
+    "okcdot": {
+      "label": "OKCDOT",
+      "guild_id": 1241861400775884840,
+      "member_role_ids": [888888888888888888],
+      "promotion_role_ids": [999999999999999999],
+      "managed_role_ids": [],
+      "log_channel_id": 101010101010101010,
+      "promotion_channel_id": 202020202020202020,
+      "ban_role_id": 303030303030303030,
+      "termination_floor_role_id": 888888888888888888
+    },
+    "okcf": {
+      "label": "OKCFD",
+      "guild_id": 1485424840570699796,
+      "member_role_ids": [888888888888888888],
+      "promotion_role_ids": [999999999999999999],
+      "managed_role_ids": [],
+      "log_channel_id": 101010101010101010,
+      "promotion_channel_id": 202020202020202020,
+      "ban_role_id": 303030303030303030,
+      "termination_floor_role_id": 888888888888888888
+    },
+    "okcs": {
+      "label": "OKCS",
+      "guild_id": 1488028607795298425,
+      "member_role_ids": [111111111111111111],
+      "promotion_role_ids": [222222222222222222, 333333333333333333],
+      "managed_role_ids": [444444444444444444],
+      "log_channel_id": 555555555555555555,
+      "promotion_channel_id": 666666666666666666,
+      "ban_role_id": 777777777777777777,
+      "termination_floor_role_id": 111111111111111111
+    },
+    "mh": {
+      "label": "MH",
+      "guild_id": 1488176515597205564,
+      "member_role_ids": [1470846782094315602],
+      "promotion_role_ids": [
+        1470581316285239307,
+        1470581316285239307,
+        1471273888565428254,
+        1471276451495153785,
+        1470581261390184612,
+        1470581228334747750,
+        1470581192792215623,
+        1470581124299362497,
+        1470581068678828187,
+        1470581034163896362,
+        1470580965100224522,
+        1470580659889242193,
+        1470580626708103169,
+        1470580560748613692
+      ],
+      "managed_role_ids": [],
+      "log_channel_id": 101010101010101010,
+      "promotion_channel_id": 202020202020202020,
+      "ban_role_id": 303030303030303030,
+      "termination_floor_role_id": 888888888888888888
+    }
+  }
 }

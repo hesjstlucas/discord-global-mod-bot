@@ -120,6 +120,7 @@ Then:
 - `ban` removes the configured department roles and adds the configured department ban role if one exists.
 - `infract warn` and `infract strike` log the action. `infract terminate` removes configured department roles above the configured termination floor role.
 - `promote` only allows roles listed in that department's `promotion_role_ids`, removes prior promotion roles for that department, and posts the promotion embed to the configured promotion channel.
+- In `/dep promote`, choose the department first. The `role` field then autocompletes only the configured promotion roles for that department.
 
 ## Department Config
 
