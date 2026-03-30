@@ -42,16 +42,34 @@ def parse_id_set(value: object) -> set[int]:
     return result
 
 
-def parse_id_list(value: object) -> tuple[int, ...]:
+def parse_id_step(value: object) -> tuple[int, ...]:
+    if isinstance(value, dict):
+        value = value.get("role_ids")
+
+    raw_items = value if isinstance(value, list) else [value]
+    result: list[int] = []
+    seen: set[int] = set()
+
+    for item in raw_items:
+        role_id = parse_optional_id(item)
+        if role_id is None or role_id in seen:
+            continue
+        result.append(role_id)
+        seen.add(role_id)
+
+    return tuple(result)
+
+
+def parse_id_steps(value: object) -> tuple[tuple[int, ...], ...]:
     if not isinstance(value, list):
         return ()
 
-    result: list[int] = []
+    result: list[tuple[int, ...]] = []
     for item in value:
-        if isinstance(item, int):
-            result.append(item)
-        elif isinstance(item, str) and item.strip().isdigit():
-            result.append(int(item.strip()))
+        step = parse_id_step(item)
+        if step and (not result or result[-1] != step):
+            result.append(step)
+
     return tuple(result)
 
 
@@ -69,7 +87,7 @@ class DepartmentConfig:
     label: str
     guild_id: Optional[int]
     member_role_ids: set[int]
-    promotion_role_ids: tuple[int, ...]
+    promotion_steps: tuple[tuple[int, ...], ...]
     managed_role_ids: set[int]
     log_channel_id: Optional[int]
     promotion_channel_id: Optional[int]
@@ -82,7 +100,7 @@ class DepartmentConfig:
 
     @property
     def promotion_role_id_set(self) -> set[int]:
-        return set(self.promotion_role_ids)
+        return {role_id for step in self.promotion_steps for role_id in step}
 
     @property
     def all_role_ids(self) -> set[int]:
@@ -128,7 +146,7 @@ class DepartmentRegistry:
                 label=label,
                 guild_id=parse_optional_id(raw_value.get("guild_id")),
                 member_role_ids=parse_id_set(raw_value.get("member_role_ids")),
-                promotion_role_ids=parse_id_list(raw_value.get("promotion_role_ids")),
+                promotion_steps=parse_id_steps(raw_value.get("promotion_role_ids")),
                 managed_role_ids=parse_id_set(raw_value.get("managed_role_ids")),
                 log_channel_id=parse_optional_id(raw_value.get("log_channel_id")),
                 promotion_channel_id=parse_optional_id(raw_value.get("promotion_channel_id")),
@@ -172,6 +190,12 @@ def format_role_names(roles: list[discord.Role]) -> str:
     if not roles:
         return "none"
     return ", ".join(role.name for role in roles)
+
+
+def format_role_ids(role_ids: list[int]) -> str:
+    if not role_ids:
+        return "none"
+    return ", ".join(f"`{role_id}`" for role_id in role_ids)
 
 
 def build_department_embed(
@@ -234,26 +258,31 @@ def get_member_department_roles(
     return [role for role in member.roles if role.id in role_ids]
 
 
-def get_member_promotion_roles(member: discord.Member, department: DepartmentConfig) -> list[discord.Role]:
-    member_role_ids = {role.id for role in member.roles}
-    ordered_roles: list[discord.Role] = []
+def resolve_step_roles(
+    guild: discord.Guild, step: tuple[int, ...]
+) -> tuple[list[discord.Role], list[int]]:
+    roles: list[discord.Role] = []
+    missing_role_ids: list[int] = []
 
-    for role_id in department.promotion_role_ids:
-        if role_id not in member_role_ids:
+    for role_id in step:
+        role = guild.get_role(role_id)
+        if role is None:
+            missing_role_ids.append(role_id)
             continue
+        roles.append(role)
 
-        role = member.guild.get_role(role_id)
-        if role is not None:
-            ordered_roles.append(role)
-
-    return ordered_roles
+    return roles, missing_role_ids
 
 
-def get_rank_index(department: DepartmentConfig, role_id: int) -> Optional[int]:
-    try:
-        return department.promotion_role_ids.index(role_id)
-    except ValueError:
-        return None
+def get_member_rank_index(member: discord.Member, department: DepartmentConfig) -> Optional[int]:
+    member_role_ids = {role.id for role in member.roles}
+    matched_index: Optional[int] = None
+
+    for index, step in enumerate(department.promotion_steps):
+        if any(role_id in member_role_ids for role_id in step):
+            matched_index = index
+
+    return matched_index
 
 
 def bot_can_manage_role(guild: discord.Guild, role: discord.Role) -> bool:
@@ -581,7 +610,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
         if dept is None:
             return
 
-        if not dept.promotion_role_ids:
+        if not dept.promotion_steps:
             await bot.send_ephemeral(
                 interaction,
                 f"{dept.label} does not have any configured promotion ranks.",
@@ -595,50 +624,57 @@ def register_department_commands(bot: GlobalModBot) -> None:
             )
             return
 
-        current_rank_roles = get_member_promotion_roles(member, dept)
-        previous_role: Optional[discord.Role] = None
+        current_index = get_member_rank_index(member, dept)
+        previous_roles: list[discord.Role] = []
+        previous_step: Optional[tuple[int, ...]] = None
 
-        if current_rank_roles:
-            previous_role = current_rank_roles[-1]
-            current_index = get_rank_index(dept, previous_role.id)
-            if current_index is None:
+        if current_index is not None:
+            previous_step = dept.promotion_steps[current_index]
+            previous_roles, previous_missing = resolve_step_roles(member.guild, previous_step)
+            if previous_missing:
                 await bot.send_ephemeral(
                     interaction,
-                    f"{previous_role.name} is not in the configured {dept.label} rank ladder.",
+                    f"{dept.label} is missing current rank role IDs: {format_role_ids(previous_missing)}.",
                 )
                 return
 
-            if current_index >= len(dept.promotion_role_ids) - 1:
+            if current_index >= len(dept.promotion_steps) - 1:
                 await bot.send_ephemeral(
                     interaction,
                     f"{member.mention} is already at the highest configured {dept.label} rank.",
                 )
                 return
 
-            target_role_id = dept.promotion_role_ids[current_index + 1]
+            target_step = dept.promotion_steps[current_index + 1]
         else:
-            target_role_id = dept.promotion_role_ids[0]
+            target_step = dept.promotion_steps[0]
 
-        resolved_role = interaction.guild.get_role(target_role_id)
-        if resolved_role is None:
+        target_roles, missing_target_role_ids = resolve_step_roles(member.guild, target_step)
+        if missing_target_role_ids:
             await bot.send_ephemeral(
                 interaction,
-                "The next configured department rank role no longer exists in this server.",
+                (
+                    f"The next configured {dept.label} rank is missing role IDs: "
+                    f"{format_role_ids(missing_target_role_ids)}."
+                ),
             )
             return
 
-        if not bot_can_manage_role(member.guild, resolved_role):
+        unmanageable_target_roles = collect_unmanageable_roles(member.guild, target_roles)
+        if unmanageable_target_roles:
             await bot.send_ephemeral(
                 interaction,
-                f"I cannot assign the role `{resolved_role.name}`.",
+                f"I cannot assign these roles: {format_role_names(unmanageable_target_roles)}.",
             )
             return
 
+        target_role_ids = set(target_step)
         roles_to_remove = [
             current_role
             for current_role in member.roles
-            if current_role.id in dept.promotion_role_id_set and current_role.id != resolved_role.id
+            if current_role.id in dept.promotion_role_id_set and current_role.id not in target_role_ids
         ]
+        roles_to_add = [role for role in target_roles if role not in member.roles]
         unmanageable = collect_unmanageable_roles(member.guild, roles_to_remove)
         if unmanageable:
             await bot.send_ephemeral(
@@ -652,8 +688,8 @@ def register_department_commands(bot: GlobalModBot) -> None:
 
         if roles_to_remove:
             await member.remove_roles(*roles_to_remove, reason=audit_reason)
-        if resolved_role not in member.roles:
-            await member.add_roles(resolved_role, reason=audit_reason)
+        if roles_to_add:
+            await member.add_roles(*roles_to_add, reason=audit_reason)
 
         embed = build_department_embed(
             title="Department Promotion",
@@ -663,9 +699,13 @@ def register_department_commands(bot: GlobalModBot) -> None:
             moderator=interaction.user,
             reason=reason,
         )
-        if previous_role is not None:
-            embed.add_field(name="Previous Rank", value=previous_role.name, inline=False)
-        embed.add_field(name="Assigned Role", value=resolved_role.name, inline=False)
+        if previous_roles:
+            embed.add_field(
+                name="Previous Rank Roles",
+                value=format_role_names(previous_roles),
+                inline=False,
+            )
+        embed.add_field(name="Assigned Roles", value=format_role_names(target_roles), inline=False)
         if roles_to_remove:
             embed.add_field(
                 name="Removed Previous Roles",
@@ -679,10 +719,16 @@ def register_department_commands(bot: GlobalModBot) -> None:
         if dept.log_channel_id is not None and dept.log_channel_id != dept.promotion_channel_id:
             await send_embed_to_channel(member.guild, dept.log_channel_id, embed)
 
-        if previous_role is None:
-            message = f"Assigned {member.mention} their first {dept.label} rank: {resolved_role.name}."
+        if previous_step is None:
+            message = (
+                f"Assigned {member.mention} their first {dept.label} rank roles: "
+                f"{format_role_names(target_roles)}."
+            )
         else:
-            message = f"Promoted {member.mention} in {dept.label} from {previous_role.name} to {resolved_role.name}."
+            message = (
+                f"Promoted {member.mention} in {dept.label} from "
+                f"{format_role_names(previous_roles)} to {format_role_names(target_roles)}."
+            )
         if roles_to_remove:
             message += f"\nRemoved previous roles: {format_role_names(roles_to_remove)}."
         if channel_error is not None:
@@ -717,20 +763,11 @@ def register_department_commands(bot: GlobalModBot) -> None:
             )
             return
 
-        current_rank_roles = get_member_promotion_roles(member, dept)
-        if not current_rank_roles:
-            await bot.send_ephemeral(
-                interaction,
-                f"{member.mention} does not have a configured {dept.label} rank role.",
-            )
-            return
-
-        current_role = current_rank_roles[-1]
-        current_index = get_rank_index(dept, current_role.id)
+        current_index = get_member_rank_index(member, dept)
         if current_index is None:
             await bot.send_ephemeral(
                 interaction,
-                f"{current_role.name} is not in the configured {dept.label} rank ladder.",
+                f"{member.mention} does not have a configured {dept.label} rank role.",
             )
             return
 
@@ -741,27 +778,40 @@ def register_department_commands(bot: GlobalModBot) -> None:
             )
             return
 
-        target_role = member.guild.get_role(dept.promotion_role_ids[current_index - 1])
-        if target_role is None:
+        current_step = dept.promotion_steps[current_index]
+        current_roles, missing_current_role_ids = resolve_step_roles(member.guild, current_step)
+        if missing_current_role_ids:
             await bot.send_ephemeral(
                 interaction,
-                f"{dept.label} is missing the next-lower configured rank role.",
+                f"{dept.label} is missing current rank role IDs: {format_role_ids(missing_current_role_ids)}.",
             )
             return
 
-        if not bot_can_manage_role(member.guild, target_role):
+        target_step = dept.promotion_steps[current_index - 1]
+        target_roles, missing_target_role_ids = resolve_step_roles(member.guild, target_step)
+        if missing_target_role_ids:
             await bot.send_ephemeral(
                 interaction,
-                f"I cannot assign the role `{target_role.name}`.",
+                f"{dept.label} is missing the next-lower rank role IDs: {format_role_ids(missing_target_role_ids)}.",
             )
             return
 
+        unmanageable_target_roles = collect_unmanageable_roles(member.guild, target_roles)
+        if unmanageable_target_roles:
+            await bot.send_ephemeral(
+                interaction,
+                f"I cannot assign these roles: {format_role_names(unmanageable_target_roles)}.",
+            )
+            return
+
+        target_role_ids = set(target_step)
         roles_to_remove = [
             current_member_role
             for current_member_role in member.roles
             if current_member_role.id in dept.promotion_role_id_set
-            and current_member_role.id != target_role.id
+            and current_member_role.id not in target_role_ids
         ]
+        roles_to_add = [role for role in target_roles if role not in member.roles]
         unmanageable = collect_unmanageable_roles(member.guild, roles_to_remove)
         if unmanageable:
             await bot.send_ephemeral(
@@ -775,8 +825,8 @@ def register_department_commands(bot: GlobalModBot) -> None:
 
         if roles_to_remove:
             await member.remove_roles(*roles_to_remove, reason=audit_reason)
-        if target_role not in member.roles:
-            await member.add_roles(target_role, reason=audit_reason)
+        if roles_to_add:
+            await member.add_roles(*roles_to_add, reason=audit_reason)
 
         embed = build_department_embed(
             title="Department Demotion",
@@ -786,8 +836,12 @@ def register_department_commands(bot: GlobalModBot) -> None:
             moderator=interaction.user,
             reason=reason,
         )
-        embed.add_field(name="Previous Rank", value=current_role.name, inline=False)
-        embed.add_field(name="New Rank", value=target_role.name, inline=False)
+        embed.add_field(
+            name="Previous Rank Roles",
+            value=format_role_names(current_roles),
+            inline=False,
+        )
+        embed.add_field(name="New Rank Roles", value=format_role_names(target_roles), inline=False)
         if roles_to_remove:
             embed.add_field(
                 name="Removed Previous Roles",
@@ -799,7 +853,10 @@ def register_department_commands(bot: GlobalModBot) -> None:
         if dept.log_channel_id is not None and dept.log_channel_id != dept.promotion_channel_id:
             await send_embed_to_channel(member.guild, dept.log_channel_id, embed)
 
-        message = f"Demoted {member.mention} in {dept.label} from {current_role.name} to {target_role.name}."
+        message = (
+            f"Demoted {member.mention} in {dept.label} from "
+            f"{format_role_names(current_roles)} to {format_role_names(target_roles)}."
+        )
         if roles_to_remove:
             message += f"\nRemoved previous roles: {format_role_names(roles_to_remove)}."
         if channel_error is not None:

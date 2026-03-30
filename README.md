@@ -120,14 +120,14 @@ Then:
 - `kick` removes the configured department roles from the member.
 - `ban` removes the configured department roles. If you still define an optional `ban_role_id`, the bot adds that too.
 - `infract warn` and `infract strike` log the action. `infract terminate` removes configured department roles above the configured termination floor role.
-- `promote` uses the ordered `promotion_role_ids` ladder and moves the member up exactly one configured rank. If they do not have a configured rank yet, it assigns the first role in the list.
+- `promote` uses the ordered `promotion_role_ids` ladder and moves the member up exactly one configured rank step. If they do not have a configured rank yet, it assigns the first step in the list.
 - `demote` uses that same ordered `promotion_role_ids` list and moves the member down exactly one configured rank.
 
 ## Department Config
 
 - Copy [departments.example.json](/C:/Users/heher/Documents/Playground/discord-global-mod-bot/departments.example.json) to `departments.json`, then replace the example IDs.
 - Minimal fields:
-  - `promotion_role_ids`: ordered from lowest rank to highest rank; these are the only roles allowed in `/dep promote`, and `/dep demote` steps down one slot in this list
+  - `promotion_role_ids`: ordered from lowest rank to highest rank; each item can be a single role ID or a list of linked role IDs for one rank step. `/dep promote` and `/dep demote` move one step at a time.
   - `guild_id`: optional server restriction for that department
   - `termination_floor_role_id`: roles above this configured role are removed by `/dep infract terminate`
   - `log_channel_id`: where kick, ban, and infraction logs go
