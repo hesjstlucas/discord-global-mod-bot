@@ -285,6 +285,14 @@ def get_member_rank_index(member: discord.Member, department: DepartmentConfig) 
     return matched_index
 
 
+def get_step_index_for_role(department: DepartmentConfig, role_id: int) -> Optional[int]:
+    for index, step in enumerate(department.promotion_steps):
+        if role_id in step:
+            return index
+
+    return None
+
+
 def bot_can_manage_role(guild: discord.Guild, role: discord.Role) -> bool:
     bot_member = guild.me
     if bot_member is None:
@@ -330,6 +338,43 @@ async def autocomplete_department(
     if not isinstance(bot, discord.Client) or not hasattr(bot, "department_registry"):
         return []
     return bot.department_registry.autocomplete(current)
+
+
+async def autocomplete_department_role(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    bot = interaction.client
+    if not isinstance(bot, discord.Client) or not hasattr(bot, "department_registry"):
+        return []
+
+    department_value = getattr(interaction.namespace, "department", "")
+    if not isinstance(department_value, str) or not department_value.strip():
+        return []
+
+    department = bot.department_registry.get(department_value)
+    if department is None or interaction.guild is None:
+        return []
+
+    current_lower = current.strip().lower()
+    matches: list[app_commands.Choice[str]] = []
+    seen_role_ids: set[int] = set()
+
+    for step in department.promotion_steps:
+        for role_id in step:
+            if role_id in seen_role_ids:
+                continue
+
+            role = interaction.guild.get_role(role_id)
+            if role is None:
+                continue
+
+            seen_role_ids.add(role_id)
+            if current_lower and current_lower not in role.name.lower():
+                continue
+
+            matches.append(app_commands.Choice(name=role.name[:100], value=str(role.id)))
+
+    return matches[:25]
 
 
 def register_department_commands(bot: GlobalModBot) -> None:
@@ -594,13 +639,18 @@ def register_department_commands(bot: GlobalModBot) -> None:
     @app_commands.describe(
         member="Member to promote",
         department="Department name",
+        role="Department role to assign",
         reason="Reason for the promotion",
     )
-    @app_commands.autocomplete(department=autocomplete_department)
+    @app_commands.autocomplete(
+        department=autocomplete_department,
+        role=autocomplete_department_role,
+    )
     async def dep_promote(
         interaction: discord.Interaction,
         member: discord.Member,
         department: str,
+        role: str,
         reason: str,
     ) -> None:
         if not await bot.ensure_access(interaction, "manage_roles"):
@@ -617,10 +667,25 @@ def register_department_commands(bot: GlobalModBot) -> None:
             )
             return
 
+        if not role.isdigit():
+            await bot.send_ephemeral(
+                interaction,
+                "Choose a role from the department role suggestions.",
+            )
+            return
+
         if not bot.can_bot_moderate(member):
             await bot.send_ephemeral(
                 interaction,
                 f"I cannot manage {member.mention} because of role hierarchy or missing permissions.",
+            )
+            return
+
+        target_index = get_step_index_for_role(dept, int(role))
+        if target_index is None:
+            await bot.send_ephemeral(
+                interaction,
+                f"That role is not an allowed promotion role for {dept.label}.",
             )
             return
 
@@ -638,16 +703,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
                 )
                 return
 
-            if current_index >= len(dept.promotion_steps) - 1:
-                await bot.send_ephemeral(
-                    interaction,
-                    f"{member.mention} is already at the highest configured {dept.label} rank.",
-                )
-                return
-
-            target_step = dept.promotion_steps[current_index + 1]
-        else:
-            target_step = dept.promotion_steps[0]
+        target_step = dept.promotion_steps[target_index]
 
         target_roles, missing_target_role_ids = resolve_step_roles(member.guild, target_step)
         if missing_target_role_ids:
@@ -665,6 +721,13 @@ def register_department_commands(bot: GlobalModBot) -> None:
             await bot.send_ephemeral(
                 interaction,
                 f"I cannot assign these roles: {format_role_names(unmanageable_target_roles)}.",
+            )
+            return
+
+        if current_index == target_index and all(role in member.roles for role in target_roles):
+            await bot.send_ephemeral(
+                interaction,
+                f"{member.mention} already has the selected {dept.label} rank roles.",
             )
             return
 
@@ -722,6 +785,11 @@ def register_department_commands(bot: GlobalModBot) -> None:
         if previous_step is None:
             message = (
                 f"Assigned {member.mention} their first {dept.label} rank roles: "
+                f"{format_role_names(target_roles)}."
+            )
+        elif current_index == target_index:
+            message = (
+                f"Updated {member.mention}'s {dept.label} rank roles to "
                 f"{format_role_names(target_roles)}."
             )
         else:

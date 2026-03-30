@@ -21,7 +21,7 @@ Discord bots do **not** receive user IP addresses from the Discord API, so a rea
 - `/dep kick member department reason`
 - `/dep infract member department action reason`
 - `/dep ban member department reason`
-- `/dep promote member department reason`
+- `/dep promote member department role reason`
 - `/dep demote member department reason`
 - `/ban user reason`
 - `/kick user reason`
@@ -120,7 +120,7 @@ Then:
 - `kick` removes the configured department roles from the member.
 - `ban` removes the configured department roles. If you still define an optional `ban_role_id`, the bot adds that too.
 - `infract warn` and `infract strike` log the action. `infract terminate` removes configured department roles above the configured termination floor role.
-- `promote` uses the ordered `promotion_role_ids` ladder and moves the member up exactly one configured rank step. If they do not have a configured rank yet, it assigns the first step in the list.
+- `promote` accepts one of the configured department roles, then assigns the full linked rank step for that role. If a rank step contains multiple roles, the bot gives all of them together.
 - `demote` uses that same ordered `promotion_role_ids` list and moves the member down exactly one configured rank.
 
 ## Department Config
@@ -137,3 +137,4 @@ Then:
   - `member_role_ids`: extra membership roles to remove during kick, ban, or terminate
   - `managed_role_ids`: extra department roles to remove during kick, ban, or terminate
   - `ban_role_id`: optional department blacklist role added by `/dep ban`
+- In `/dep promote`, choose the department first. The `role` field then autocompletes only the configured roles for that department. Picking any role from a linked bundle assigns the whole bundle.
