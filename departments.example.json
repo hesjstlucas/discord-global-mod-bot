@@ -3,20 +3,14 @@
     "lspd": {
       "label": "LSPD",
       "guild_id": 123456789012345678,
-      "member_role_ids": [
-        111111111111111111
-      ],
       "promotion_role_ids": [
+        111111111111111111,
         222222222222222222,
         333333333333333333,
         444444444444444444
       ],
-      "managed_role_ids": [
-        555555555555555555
-      ],
-      "log_channel_id": 666666666666666666,
-      "promotion_channel_id": 777777777777777777,
-      "ban_role_id": 888888888888888888,
+      "log_channel_id": 555555555555555555,
+      "promotion_channel_id": 666666666666666666,
       "termination_floor_role_id": 111111111111111111
     }
   }

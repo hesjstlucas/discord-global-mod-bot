@@ -22,6 +22,7 @@ Discord bots do **not** receive user IP addresses from the Discord API, so a rea
 - `/dep infract member department action reason`
 - `/dep ban member department reason`
 - `/dep promote member department role reason`
+- `/dep demote member department reason`
 - `/ban user reason`
 - `/kick user reason`
 - `/timeout user duration reason`
@@ -117,21 +118,23 @@ Then:
 - I assumed each `/dep` command needs a target member, even though your shorthand omitted it.
 - These commands are role-based department actions inside the current guild, not Discord server bans.
 - `kick` removes the configured department roles from the member.
-- `ban` removes the configured department roles and adds the configured department ban role if one exists.
+- `ban` removes the configured department roles. If you still define an optional `ban_role_id`, the bot adds that too.
 - `infract warn` and `infract strike` log the action. `infract terminate` removes configured department roles above the configured termination floor role.
 - `promote` only allows roles listed in that department's `promotion_role_ids`, removes prior promotion roles for that department, and posts the promotion embed to the configured promotion channel.
+- `demote` uses that same ordered `promotion_role_ids` list and moves the member down exactly one configured rank.
 - In `/dep promote`, choose the department first. The `role` field then autocompletes only the configured promotion roles for that department.
 
 ## Department Config
 
 - Copy [departments.example.json](/C:/Users/heher/Documents/Playground/discord-global-mod-bot/departments.example.json) to `departments.json`, then replace the example IDs.
-- Config fields:
-  - `label`: display name used in command output
+- Minimal fields:
+  - `promotion_role_ids`: ordered from lowest rank to highest rank; these are the only roles allowed in `/dep promote`, and `/dep demote` steps down one slot in this list
   - `guild_id`: optional server restriction for that department
-  - `member_role_ids`: base roles for department membership
-  - `promotion_role_ids`: only these roles are allowed in `/dep promote`
-  - `managed_role_ids`: extra department roles to remove during kick/ban/terminate
-  - `log_channel_id`: where kick/ban/infract logs go
-  - `promotion_channel_id`: where promotion embeds go
-  - `ban_role_id`: optional department blacklist role added by `/dep ban`
   - `termination_floor_role_id`: roles above this configured role are removed by `/dep infract terminate`
+  - `log_channel_id`: where kick, ban, and infraction logs go
+  - `promotion_channel_id`: where promotion and demotion embeds go
+- Optional fields:
+  - `label`: display name used in command output; if you omit it, the department key is used
+  - `member_role_ids`: extra membership roles to remove during kick, ban, or terminate
+  - `managed_role_ids`: extra department roles to remove during kick, ban, or terminate
+  - `ban_role_id`: optional department blacklist role added by `/dep ban`
