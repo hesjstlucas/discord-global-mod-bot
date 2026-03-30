@@ -17,6 +17,7 @@ Discord bots do **not** receive user IP addresses from the Discord API, so a rea
 - `/ungban user_id reason`
 - `/gbanlist`
 - `/syncgbans`
+- `/globalmessage message`
 - `/ban user reason`
 - `/kick user reason`
 - `/timeout user duration reason`
@@ -31,9 +32,9 @@ Discord bots do **not** receive user IP addresses from the Discord API, so a rea
 - Commands stay visible in Discord and the bot enforces access at runtime.
 - Permission mapping:
   - `gban`, `ungban`, `gbanlist`, `syncgbans`, `ban`: `Ban Members`
+  - `globalmessage`, `purge`: `Manage Messages`
   - `kick`: `Kick Members`
   - `timeout`: `Moderate Members`
-  - `purge`: `Manage Messages`
 
 ## Setup
 
@@ -80,6 +81,7 @@ REGISTER_GUILD_ID=
 OWNER_USER_IDS=
 MOD_ROLE_IDS=
 GLOBAL_BAN_GUILD_IDS=
+GLOBAL_MESSAGE_CHANNEL_MAP=
 DATA_FILE_PATH=/app/data/moderation-store.json
 ```
 
@@ -101,3 +103,4 @@ Then:
 - Timeout duration format examples: `10m`, `2h`, `3d`.
 - Purge skips messages older than 14 days because Discord bulk delete does.
 - `GLOBAL_BAN_GUILD_IDS` can contain comma-separated server IDs. If set, global ban commands only apply to those servers.
+- `GLOBAL_MESSAGE_CHANNEL_MAP` uses `guild_id:channel_id,guild_id:channel_id`. `/globalmessage` sends to those channels in the targeted guilds.

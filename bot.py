@@ -46,6 +46,24 @@ def split_csv(value: str) -> set[int]:
     return result
 
 
+def parse_guild_channel_map(value: str) -> dict[int, int]:
+    result: dict[int, int] = {}
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+
+        guild_id, separator, channel_id = item.partition(":")
+        if separator != ":" or not guild_id.strip().isdigit() or not channel_id.strip().isdigit():
+            raise RuntimeError(
+                "GLOBAL_MESSAGE_CHANNEL_MAP must use the format guild_id:channel_id,guild_id:channel_id"
+            )
+
+        result[int(guild_id.strip())] = int(channel_id.strip())
+
+    return result
+
+
 def normalize_reason(value: Optional[str]) -> str:
     text = (value or "No reason provided").strip()
     text = re.sub(r"\s+", " ", text)
@@ -120,6 +138,29 @@ def format_target_scope(targeted_guilds: list[discord.Guild], missing_guild_ids:
     return "\n".join(lines)
 
 
+def summarize_message_results(results: list[dict]) -> str:
+    sent = [result for result in results if result["status"] == "sent"]
+    failed = [result for result in results if result["status"] == "failed"]
+    missing_channels = [result for result in results if result["status"] == "missing_channel"]
+
+    lines = [f"Sent in {len(sent)} server(s)."]
+
+    if missing_channels:
+        preview = ", ".join(item["guild_name"] for item in missing_channels[:5])
+        suffix = "..." if len(missing_channels) > 5 else ""
+        lines.append(
+            f"Missing channel mapping in {len(missing_channels)} server(s): {preview}{suffix}"
+        )
+
+    if failed:
+        preview = " | ".join(
+            f"{item['guild_name']}: {item['reason']}" for item in failed[:3]
+        )
+        lines.append(f"Failed in {len(failed)} server(s): {preview}")
+
+    return "\n".join(lines)
+
+
 def format_ban_list(entries: list[dict]) -> str:
     if not entries:
         return "No global bans are stored yet."
@@ -145,6 +186,7 @@ class BotConfig:
     owner_user_ids: set[int]
     mod_role_ids: set[int]
     global_ban_guild_ids: set[int]
+    global_message_channel_map: dict[int, int]
     data_file_path: Path
 
     @classmethod
@@ -159,6 +201,9 @@ class BotConfig:
             owner_user_ids=split_csv(os.getenv("OWNER_USER_IDS", "")),
             mod_role_ids=split_csv(os.getenv("MOD_ROLE_IDS", "")),
             global_ban_guild_ids=split_csv(os.getenv("GLOBAL_BAN_GUILD_IDS", "")),
+            global_message_channel_map=parse_guild_channel_map(
+                os.getenv("GLOBAL_MESSAGE_CHANNEL_MAP", "")
+            ),
             data_file_path=Path(
                 os.getenv("DATA_FILE_PATH", "data/moderation-store.json").strip()
                 or "data/moderation-store.json"
@@ -528,6 +573,26 @@ class GlobalModBot(commands.Bot):
                 )
             )
 
+        @self.tree.command(name="globalmessage", description="Send a message to the configured channels in your target servers.")
+        @app_commands.guild_only()
+        @app_commands.describe(message="Message to send to every configured server")
+        async def globalmessage(
+            interaction: discord.Interaction, message: str
+        ) -> None:
+            if not await self.ensure_access(interaction, "manage_messages"):
+                return
+
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            target_guilds, missing_guild_ids = self.get_target_guilds()
+            results = await self.send_global_message_everywhere(message, target_guilds)
+
+            await interaction.edit_original_response(
+                content=(
+                    f"{format_target_scope(target_guilds, missing_guild_ids)}\n"
+                    f"{summarize_message_results(results)}"
+                )
+            )
+
     async def ensure_access(self, interaction: discord.Interaction, permission_name: str) -> bool:
         if interaction.guild is None or not isinstance(interaction.user, discord.Member):
             await self.send_ephemeral(interaction, "This command can only be used in a server.")
@@ -617,6 +682,50 @@ class GlobalModBot(commands.Bot):
                 "reason": summarize_exception(error),
             }
 
+    async def send_global_message_to_guild(self, guild: discord.Guild, message: str) -> dict:
+        channel_id = self.config.global_message_channel_map.get(guild.id)
+        if channel_id is None:
+            return {
+                "guild_id": guild.id,
+                "guild_name": guild.name,
+                "status": "missing_channel",
+            }
+
+        channel = guild.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await guild.fetch_channel(channel_id)
+            except Exception as error:
+                return {
+                    "guild_id": guild.id,
+                    "guild_name": guild.name,
+                    "status": "failed",
+                    "reason": summarize_exception(error),
+                }
+
+        if not hasattr(channel, "send"):
+            return {
+                "guild_id": guild.id,
+                "guild_name": guild.name,
+                "status": "failed",
+                "reason": "Configured channel is not messageable.",
+            }
+
+        try:
+            await channel.send(message)
+            return {
+                "guild_id": guild.id,
+                "guild_name": guild.name,
+                "status": "sent",
+            }
+        except Exception as error:
+            return {
+                "guild_id": guild.id,
+                "guild_name": guild.name,
+                "status": "failed",
+                "reason": summarize_exception(error),
+            }
+
     async def apply_global_ban_everywhere(
         self, user_id: int, entry: dict
     ) -> tuple[list[dict], list[discord.Guild], list[int]]:
@@ -634,6 +743,14 @@ class GlobalModBot(commands.Bot):
         for guild in target_guilds:
             results.append(await self.lift_global_ban_from_guild(guild, user_id, reason))
         return results, target_guilds, missing_guild_ids
+
+    async def send_global_message_everywhere(
+        self, message: str, target_guilds: list[discord.Guild]
+    ) -> list[dict]:
+        results = []
+        for guild in target_guilds:
+            results.append(await self.send_global_message_to_guild(guild, message))
+        return results
 
     def get_target_guilds(self) -> tuple[list[discord.Guild], list[int]]:
         if not self.config.global_ban_guild_ids:
