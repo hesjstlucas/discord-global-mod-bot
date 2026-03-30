@@ -23,6 +23,8 @@ Discord bots do **not** receive user IP addresses from the Discord API, so a rea
 - `/dep ban member department reason`
 - `/dep promote member department role reason`
 - `/dep demote member department reason`
+- `/dep division promote member department division role reason`
+- `/dep division demote member department division role reason`
 - `/ban user reason`
 - `/kick user reason`
 - `/timeout user duration reason`
@@ -125,6 +127,7 @@ Then:
 - `infract warn` and `infract strike` log the action. `infract terminate` removes configured department roles above the configured termination floor role.
 - `promote` accepts one of the configured department roles, then assigns the full linked rank step for that role. If a rank step contains multiple roles, the bot gives all of them together.
 - `demote` uses that same ordered `promotion_role_ids` list and moves the member down exactly one configured rank.
+- `division promote` and `division demote` do the same thing for a configured division under the selected department.
 
 ## Department Config
 
@@ -140,4 +143,9 @@ Then:
   - `member_role_ids`: extra membership roles to remove during kick, ban, or terminate
   - `managed_role_ids`: extra department roles to remove during kick, ban, or terminate
   - `ban_role_id`: optional department blacklist role added by `/dep ban`
+- Division fields:
+  - `divisions`: optional object keyed by division name
+  - each division can define `label`, `promotion_role_ids`, `log_channel_id`, and `promotion_channel_id`
+  - if a division omits channel IDs, it falls back to the parent department channels
 - In `/dep promote`, choose the department first. The `role` field then autocompletes only the configured roles for that department. Picking any role from a linked bundle assigns the whole bundle.
+- In `/dep division promote` and `/dep division demote`, choose the department first, then the division. The `role` field autocompletes only the configured roles for that division.
