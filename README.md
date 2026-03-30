@@ -21,7 +21,7 @@ Discord bots do **not** receive user IP addresses from the Discord API, so a rea
 - `/dep kick member department reason`
 - `/dep infract member department action reason`
 - `/dep ban member department reason`
-- `/dep promote member department role reason`
+- `/dep promote member department reason`
 - `/dep demote member department reason`
 - `/ban user reason`
 - `/kick user reason`
@@ -120,9 +120,8 @@ Then:
 - `kick` removes the configured department roles from the member.
 - `ban` removes the configured department roles. If you still define an optional `ban_role_id`, the bot adds that too.
 - `infract warn` and `infract strike` log the action. `infract terminate` removes configured department roles above the configured termination floor role.
-- `promote` only allows roles listed in that department's `promotion_role_ids`, removes prior promotion roles for that department, and posts the promotion embed to the configured promotion channel.
+- `promote` uses the ordered `promotion_role_ids` ladder and moves the member up exactly one configured rank. If they do not have a configured rank yet, it assigns the first role in the list.
 - `demote` uses that same ordered `promotion_role_ids` list and moves the member down exactly one configured rank.
-- In `/dep promote`, choose the department first. The `role` field then autocompletes only the configured promotion roles for that department.
 
 ## Department Config
 
