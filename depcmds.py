@@ -308,7 +308,7 @@ async def resolve_department_for_interaction(
     bot: GlobalModBot,
     interaction: discord.Interaction,
     department_name: str,
-) -> Optional[DepartmentConfig]:
+) -> Optional[tuple[DepartmentConfig, discord.Guild]]:
     department = bot.department_registry.get(department_name)
     if department is None:
         await bot.send_ephemeral(
@@ -321,14 +321,44 @@ async def resolve_department_for_interaction(
         await bot.send_ephemeral(interaction, "This command can only be used in a server.")
         return None
 
-    if department.guild_id is not None and interaction.guild.id != department.guild_id:
+    target_guild_id = department.guild_id or interaction.guild.id
+    target_guild = bot.get_guild(target_guild_id)
+    if target_guild is None:
         await bot.send_ephemeral(
             interaction,
-            f"{department.label} is configured for guild `{department.guild_id}`, not this server.",
+            f"I am not connected to the configured guild `{target_guild_id}` for {department.label}.",
         )
         return None
 
-    return department
+    allowed_command_guild_ids = bot.get_department_command_guild_ids()
+    if interaction.guild.id != target_guild.id and interaction.guild.id not in allowed_command_guild_ids:
+        await bot.send_ephemeral(
+            interaction,
+            (
+                f"{department.label} can only be used in **{target_guild.name}** or one of the "
+                "configured department command servers."
+            ),
+        )
+        return None
+
+    return department, target_guild
+
+
+async def resolve_department_member(
+    bot: GlobalModBot,
+    interaction: discord.Interaction,
+    target_guild: discord.Guild,
+    user: discord.abc.User,
+) -> Optional[discord.Member]:
+    target_member = await bot.get_member_if_present(target_guild, user.id)
+    if target_member is not None:
+        return target_member
+
+    await bot.send_ephemeral(
+        interaction,
+        f"{user.mention} is not a member of **{target_guild.name}**.",
+    )
+    return None
 
 
 async def autocomplete_department(
@@ -352,7 +382,15 @@ async def autocomplete_department_role(
         return []
 
     department = bot.department_registry.get(department_value)
-    if department is None or interaction.guild is None:
+    if department is None:
+        return []
+
+    target_guild_id = department.guild_id or (interaction.guild.id if interaction.guild is not None else None)
+    if target_guild_id is None:
+        return []
+
+    target_guild = bot.get_guild(target_guild_id)
+    if target_guild is None:
         return []
 
     current_lower = current.strip().lower()
@@ -364,7 +402,7 @@ async def autocomplete_department_role(
             if role_id in seen_role_ids:
                 continue
 
-            role = interaction.guild.get_role(role_id)
+            role = target_guild.get_role(role_id)
             if role is None:
                 continue
 
@@ -389,33 +427,38 @@ def register_department_commands(bot: GlobalModBot) -> None:
     @app_commands.autocomplete(department=autocomplete_department)
     async def dep_kick(
         interaction: discord.Interaction,
-        member: discord.Member,
+        member: discord.User,
         department: str,
         reason: str,
     ) -> None:
         if not await bot.ensure_access(interaction, "manage_roles"):
             return
 
-        dept = await resolve_department_for_interaction(bot, interaction, department)
-        if dept is None:
+        resolved = await resolve_department_for_interaction(bot, interaction, department)
+        if resolved is None:
+            return
+        dept, target_guild = resolved
+
+        target_member = await resolve_department_member(bot, interaction, target_guild, member)
+        if target_member is None:
             return
 
-        if not bot.can_bot_moderate(member):
+        if not bot.can_bot_moderate(target_member):
             await bot.send_ephemeral(
                 interaction,
-                f"I cannot manage {member.mention} because of role hierarchy or missing permissions.",
+                f"I cannot manage {target_member.mention} because of role hierarchy or missing permissions.",
             )
             return
 
-        roles_to_remove = get_member_department_roles(member, dept)
+        roles_to_remove = get_member_department_roles(target_member, dept)
         if not roles_to_remove:
             await bot.send_ephemeral(
                 interaction,
-                f"{member.mention} does not have any configured roles for {dept.label}.",
+                f"{target_member.mention} does not have any configured roles for {dept.label}.",
             )
             return
 
-        unmanageable = collect_unmanageable_roles(member.guild, roles_to_remove)
+        unmanageable = collect_unmanageable_roles(target_guild, roles_to_remove)
         if unmanageable:
             await bot.send_ephemeral(
                 interaction,
@@ -425,21 +468,21 @@ def register_department_commands(bot: GlobalModBot) -> None:
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         audit_reason = f"Department kick | {dept.label} | by {interaction.user.id} | {reason}"[:512]
-        await member.remove_roles(*roles_to_remove, reason=audit_reason)
+        await target_member.remove_roles(*roles_to_remove, reason=audit_reason)
 
         embed = build_department_embed(
             title="Department Kick",
             color=discord.Color.orange(),
             department=dept,
-            member=member,
+            member=target_member,
             moderator=interaction.user,
             reason=reason,
         )
         embed.add_field(name="Removed Roles", value=format_role_names(roles_to_remove), inline=False)
-        log_error = await send_embed_to_channel(member.guild, dept.log_channel_id, embed)
+        log_error = await send_embed_to_channel(target_guild, dept.log_channel_id, embed)
 
         message = (
-            f"Removed {member.mention} from {dept.label}.\n"
+            f"Removed {target_member.mention} from {dept.label} in **{target_guild.name}**.\n"
             f"Removed roles: {format_role_names(roles_to_remove)}."
         )
         if log_error is not None:
@@ -456,26 +499,31 @@ def register_department_commands(bot: GlobalModBot) -> None:
     @app_commands.autocomplete(department=autocomplete_department)
     async def dep_ban(
         interaction: discord.Interaction,
-        member: discord.Member,
+        member: discord.User,
         department: str,
         reason: str,
     ) -> None:
         if not await bot.ensure_access(interaction, "manage_roles"):
             return
 
-        dept = await resolve_department_for_interaction(bot, interaction, department)
-        if dept is None:
+        resolved = await resolve_department_for_interaction(bot, interaction, department)
+        if resolved is None:
+            return
+        dept, target_guild = resolved
+
+        target_member = await resolve_department_member(bot, interaction, target_guild, member)
+        if target_member is None:
             return
 
-        if not bot.can_bot_moderate(member):
+        if not bot.can_bot_moderate(target_member):
             await bot.send_ephemeral(
                 interaction,
-                f"I cannot manage {member.mention} because of role hierarchy or missing permissions.",
+                f"I cannot manage {target_member.mention} because of role hierarchy or missing permissions.",
             )
             return
 
-        roles_to_remove = get_member_department_roles(member, dept)
-        unmanageable = collect_unmanageable_roles(member.guild, roles_to_remove)
+        roles_to_remove = get_member_department_roles(target_member, dept)
+        unmanageable = collect_unmanageable_roles(target_guild, roles_to_remove)
         if unmanageable:
             await bot.send_ephemeral(
                 interaction,
@@ -483,9 +531,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
             )
             return
 
-        ban_role = (
-            member.guild.get_role(dept.ban_role_id) if dept.ban_role_id is not None else None
-        )
+        ban_role = target_guild.get_role(dept.ban_role_id) if dept.ban_role_id is not None else None
         if dept.ban_role_id is not None and ban_role is None:
             await bot.send_ephemeral(
                 interaction,
@@ -493,7 +539,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
             )
             return
 
-        if ban_role is not None and not bot_can_manage_role(member.guild, ban_role):
+        if ban_role is not None and not bot_can_manage_role(target_guild, ban_role):
             await bot.send_ephemeral(
                 interaction,
                 f"I cannot assign the configured ban role `{ban_role.name}`.",
@@ -504,18 +550,18 @@ def register_department_commands(bot: GlobalModBot) -> None:
         audit_reason = f"Department ban | {dept.label} | by {interaction.user.id} | {reason}"[:512]
 
         if roles_to_remove:
-            await member.remove_roles(*roles_to_remove, reason=audit_reason)
+            await target_member.remove_roles(*roles_to_remove, reason=audit_reason)
 
         added_ban_role = False
-        if ban_role is not None and ban_role not in member.roles:
-            await member.add_roles(ban_role, reason=audit_reason)
+        if ban_role is not None and ban_role not in target_member.roles:
+            await target_member.add_roles(ban_role, reason=audit_reason)
             added_ban_role = True
 
         embed = build_department_embed(
             title="Department Ban",
             color=discord.Color.red(),
             department=dept,
-            member=member,
+            member=target_member,
             moderator=interaction.user,
             reason=reason,
         )
@@ -525,9 +571,9 @@ def register_department_commands(bot: GlobalModBot) -> None:
             value=ban_role.name if added_ban_role and ban_role is not None else "none",
             inline=False,
         )
-        log_error = await send_embed_to_channel(member.guild, dept.log_channel_id, embed)
+        log_error = await send_embed_to_channel(target_guild, dept.log_channel_id, embed)
 
-        message = f"Department-banned {member.mention} from {dept.label}."
+        message = f"Department-banned {target_member.mention} from {dept.label} in **{target_guild.name}**."
         if roles_to_remove:
             message += f"\nRemoved roles: {format_role_names(roles_to_remove)}."
         if added_ban_role and ban_role is not None:
@@ -554,7 +600,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
     )
     async def dep_infract(
         interaction: discord.Interaction,
-        member: discord.Member,
+        member: discord.User,
         department: str,
         action: app_commands.Choice[str],
         reason: str,
@@ -562,8 +608,13 @@ def register_department_commands(bot: GlobalModBot) -> None:
         if not await bot.ensure_access(interaction, "manage_roles"):
             return
 
-        dept = await resolve_department_for_interaction(bot, interaction, department)
-        if dept is None:
+        resolved = await resolve_department_for_interaction(bot, interaction, department)
+        if resolved is None:
+            return
+        dept, target_guild = resolved
+
+        target_member = await resolve_department_member(bot, interaction, target_guild, member)
+        if target_member is None:
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -571,10 +622,10 @@ def register_department_commands(bot: GlobalModBot) -> None:
         removed_roles: list[discord.Role] = []
 
         if action_value == "terminate":
-            if not bot.can_bot_moderate(member):
+            if not bot.can_bot_moderate(target_member):
                 await interaction.edit_original_response(
                     content=(
-                        f"I cannot manage {member.mention} because of role hierarchy or missing permissions."
+                        f"I cannot manage {target_member.mention} because of role hierarchy or missing permissions."
                     )
                 )
                 return
@@ -585,7 +636,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
                 )
                 return
 
-            floor_role = member.guild.get_role(dept.termination_floor_role_id)
+            floor_role = target_guild.get_role(dept.termination_floor_role_id)
             if floor_role is None:
                 await interaction.edit_original_response(
                     content=f"{dept.label} is missing its configured termination floor role."
@@ -594,10 +645,10 @@ def register_department_commands(bot: GlobalModBot) -> None:
 
             removable = [
                 role
-                for role in get_member_department_roles(member, dept)
+                for role in get_member_department_roles(target_member, dept)
                 if role.position > floor_role.position
             ]
-            unmanageable = collect_unmanageable_roles(member.guild, removable)
+            unmanageable = collect_unmanageable_roles(target_guild, removable)
             if unmanageable:
                 await interaction.edit_original_response(
                     content=f"I cannot remove these roles: {format_role_names(unmanageable)}."
@@ -608,14 +659,14 @@ def register_department_commands(bot: GlobalModBot) -> None:
                 f"Department terminate | {dept.label} | by {interaction.user.id} | {reason}"[:512]
             )
             if removable:
-                await member.remove_roles(*removable, reason=audit_reason)
+                await target_member.remove_roles(*removable, reason=audit_reason)
                 removed_roles = removable
 
         embed = build_department_embed(
             title=f"Department {action_value.title()}",
             color=discord.Color.gold() if action_value != "terminate" else discord.Color.dark_red(),
             department=dept,
-            member=member,
+            member=target_member,
             moderator=interaction.user,
             reason=reason,
         )
@@ -625,9 +676,12 @@ def register_department_commands(bot: GlobalModBot) -> None:
                 value=format_role_names(removed_roles),
                 inline=False,
             )
-        log_error = await send_embed_to_channel(member.guild, dept.log_channel_id, embed)
+        log_error = await send_embed_to_channel(target_guild, dept.log_channel_id, embed)
 
-        message = f"Logged a {action_value} infraction for {member.mention} in {dept.label}."
+        message = (
+            f"Logged a {action_value} infraction for {target_member.mention} in {dept.label} "
+            f"on **{target_guild.name}**."
+        )
         if removed_roles:
             message += f"\nRemoved roles: {format_role_names(removed_roles)}."
         if log_error is not None:
@@ -648,7 +702,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
     )
     async def dep_promote(
         interaction: discord.Interaction,
-        member: discord.Member,
+        member: discord.User,
         department: str,
         role: str,
         reason: str,
@@ -656,9 +710,10 @@ def register_department_commands(bot: GlobalModBot) -> None:
         if not await bot.ensure_access(interaction, "manage_roles"):
             return
 
-        dept = await resolve_department_for_interaction(bot, interaction, department)
-        if dept is None:
+        resolved = await resolve_department_for_interaction(bot, interaction, department)
+        if resolved is None:
             return
+        dept, target_guild = resolved
 
         if not dept.promotion_steps:
             await bot.send_ephemeral(
@@ -674,10 +729,14 @@ def register_department_commands(bot: GlobalModBot) -> None:
             )
             return
 
-        if not bot.can_bot_moderate(member):
+        target_member = await resolve_department_member(bot, interaction, target_guild, member)
+        if target_member is None:
+            return
+
+        if not bot.can_bot_moderate(target_member):
             await bot.send_ephemeral(
                 interaction,
-                f"I cannot manage {member.mention} because of role hierarchy or missing permissions.",
+                f"I cannot manage {target_member.mention} because of role hierarchy or missing permissions.",
             )
             return
 
@@ -689,13 +748,13 @@ def register_department_commands(bot: GlobalModBot) -> None:
             )
             return
 
-        current_index = get_member_rank_index(member, dept)
+        current_index = get_member_rank_index(target_member, dept)
         previous_roles: list[discord.Role] = []
         previous_step: Optional[tuple[int, ...]] = None
 
         if current_index is not None:
             previous_step = dept.promotion_steps[current_index]
-            previous_roles, previous_missing = resolve_step_roles(member.guild, previous_step)
+            previous_roles, previous_missing = resolve_step_roles(target_guild, previous_step)
             if previous_missing:
                 await bot.send_ephemeral(
                     interaction,
@@ -705,7 +764,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
 
         target_step = dept.promotion_steps[target_index]
 
-        target_roles, missing_target_role_ids = resolve_step_roles(member.guild, target_step)
+        target_roles, missing_target_role_ids = resolve_step_roles(target_guild, target_step)
         if missing_target_role_ids:
             await bot.send_ephemeral(
                 interaction,
@@ -716,7 +775,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
             )
             return
 
-        unmanageable_target_roles = collect_unmanageable_roles(member.guild, target_roles)
+        unmanageable_target_roles = collect_unmanageable_roles(target_guild, target_roles)
         if unmanageable_target_roles:
             await bot.send_ephemeral(
                 interaction,
@@ -724,21 +783,21 @@ def register_department_commands(bot: GlobalModBot) -> None:
             )
             return
 
-        if current_index == target_index and all(role in member.roles for role in target_roles):
+        if current_index == target_index and all(role in target_member.roles for role in target_roles):
             await bot.send_ephemeral(
                 interaction,
-                f"{member.mention} already has the selected {dept.label} rank roles.",
+                f"{target_member.mention} already has the selected {dept.label} rank roles.",
             )
             return
 
         target_role_ids = set(target_step)
         roles_to_remove = [
             current_role
-            for current_role in member.roles
+            for current_role in target_member.roles
             if current_role.id in dept.promotion_role_id_set and current_role.id not in target_role_ids
         ]
-        roles_to_add = [role for role in target_roles if role not in member.roles]
-        unmanageable = collect_unmanageable_roles(member.guild, roles_to_remove)
+        roles_to_add = [role for role in target_roles if role not in target_member.roles]
+        unmanageable = collect_unmanageable_roles(target_guild, roles_to_remove)
         if unmanageable:
             await bot.send_ephemeral(
                 interaction,
@@ -750,15 +809,15 @@ def register_department_commands(bot: GlobalModBot) -> None:
         audit_reason = f"Department promote | {dept.label} | by {interaction.user.id} | {reason}"[:512]
 
         if roles_to_remove:
-            await member.remove_roles(*roles_to_remove, reason=audit_reason)
+            await target_member.remove_roles(*roles_to_remove, reason=audit_reason)
         if roles_to_add:
-            await member.add_roles(*roles_to_add, reason=audit_reason)
+            await target_member.add_roles(*roles_to_add, reason=audit_reason)
 
         embed = build_department_embed(
             title="Department Promotion",
             color=discord.Color.green(),
             department=dept,
-            member=member,
+            member=target_member,
             moderator=interaction.user,
             reason=reason,
         )
@@ -777,24 +836,26 @@ def register_department_commands(bot: GlobalModBot) -> None:
             )
 
         channel_error = await send_embed_to_channel(
-            member.guild, dept.promotion_channel_id, embed
+            target_guild, dept.promotion_channel_id, embed
         )
         if dept.log_channel_id is not None and dept.log_channel_id != dept.promotion_channel_id:
-            await send_embed_to_channel(member.guild, dept.log_channel_id, embed)
+            await send_embed_to_channel(target_guild, dept.log_channel_id, embed)
 
         if previous_step is None:
             message = (
-                f"Assigned {member.mention} their first {dept.label} rank roles: "
+                f"Assigned {target_member.mention} their first {dept.label} rank roles in "
+                f"**{target_guild.name}**: "
                 f"{format_role_names(target_roles)}."
             )
         elif current_index == target_index:
             message = (
-                f"Updated {member.mention}'s {dept.label} rank roles to "
+                f"Updated {target_member.mention}'s {dept.label} rank roles in "
+                f"**{target_guild.name}** to "
                 f"{format_role_names(target_roles)}."
             )
         else:
             message = (
-                f"Promoted {member.mention} in {dept.label} from "
+                f"Promoted {target_member.mention} in {dept.label} on **{target_guild.name}** from "
                 f"{format_role_names(previous_roles)} to {format_role_names(target_roles)}."
             )
         if roles_to_remove:
@@ -813,41 +874,46 @@ def register_department_commands(bot: GlobalModBot) -> None:
     @app_commands.autocomplete(department=autocomplete_department)
     async def dep_demote(
         interaction: discord.Interaction,
-        member: discord.Member,
+        member: discord.User,
         department: str,
         reason: str,
     ) -> None:
         if not await bot.ensure_access(interaction, "manage_roles"):
             return
 
-        dept = await resolve_department_for_interaction(bot, interaction, department)
-        if dept is None:
+        resolved = await resolve_department_for_interaction(bot, interaction, department)
+        if resolved is None:
+            return
+        dept, target_guild = resolved
+
+        target_member = await resolve_department_member(bot, interaction, target_guild, member)
+        if target_member is None:
             return
 
-        if not bot.can_bot_moderate(member):
+        if not bot.can_bot_moderate(target_member):
             await bot.send_ephemeral(
                 interaction,
-                f"I cannot manage {member.mention} because of role hierarchy or missing permissions.",
+                f"I cannot manage {target_member.mention} because of role hierarchy or missing permissions.",
             )
             return
 
-        current_index = get_member_rank_index(member, dept)
+        current_index = get_member_rank_index(target_member, dept)
         if current_index is None:
             await bot.send_ephemeral(
                 interaction,
-                f"{member.mention} does not have a configured {dept.label} rank role.",
+                f"{target_member.mention} does not have a configured {dept.label} rank role.",
             )
             return
 
         if current_index == 0:
             await bot.send_ephemeral(
                 interaction,
-                f"{member.mention} is already at the lowest configured {dept.label} rank.",
+                f"{target_member.mention} is already at the lowest configured {dept.label} rank.",
             )
             return
 
         current_step = dept.promotion_steps[current_index]
-        current_roles, missing_current_role_ids = resolve_step_roles(member.guild, current_step)
+        current_roles, missing_current_role_ids = resolve_step_roles(target_guild, current_step)
         if missing_current_role_ids:
             await bot.send_ephemeral(
                 interaction,
@@ -856,7 +922,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
             return
 
         target_step = dept.promotion_steps[current_index - 1]
-        target_roles, missing_target_role_ids = resolve_step_roles(member.guild, target_step)
+        target_roles, missing_target_role_ids = resolve_step_roles(target_guild, target_step)
         if missing_target_role_ids:
             await bot.send_ephemeral(
                 interaction,
@@ -864,7 +930,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
             )
             return
 
-        unmanageable_target_roles = collect_unmanageable_roles(member.guild, target_roles)
+        unmanageable_target_roles = collect_unmanageable_roles(target_guild, target_roles)
         if unmanageable_target_roles:
             await bot.send_ephemeral(
                 interaction,
@@ -875,12 +941,12 @@ def register_department_commands(bot: GlobalModBot) -> None:
         target_role_ids = set(target_step)
         roles_to_remove = [
             current_member_role
-            for current_member_role in member.roles
+            for current_member_role in target_member.roles
             if current_member_role.id in dept.promotion_role_id_set
             and current_member_role.id not in target_role_ids
         ]
-        roles_to_add = [role for role in target_roles if role not in member.roles]
-        unmanageable = collect_unmanageable_roles(member.guild, roles_to_remove)
+        roles_to_add = [role for role in target_roles if role not in target_member.roles]
+        unmanageable = collect_unmanageable_roles(target_guild, roles_to_remove)
         if unmanageable:
             await bot.send_ephemeral(
                 interaction,
@@ -892,15 +958,15 @@ def register_department_commands(bot: GlobalModBot) -> None:
         audit_reason = f"Department demote | {dept.label} | by {interaction.user.id} | {reason}"[:512]
 
         if roles_to_remove:
-            await member.remove_roles(*roles_to_remove, reason=audit_reason)
+            await target_member.remove_roles(*roles_to_remove, reason=audit_reason)
         if roles_to_add:
-            await member.add_roles(*roles_to_add, reason=audit_reason)
+            await target_member.add_roles(*roles_to_add, reason=audit_reason)
 
         embed = build_department_embed(
             title="Department Demotion",
             color=discord.Color.blurple(),
             department=dept,
-            member=member,
+            member=target_member,
             moderator=interaction.user,
             reason=reason,
         )
@@ -917,12 +983,12 @@ def register_department_commands(bot: GlobalModBot) -> None:
                 inline=False,
             )
 
-        channel_error = await send_embed_to_channel(member.guild, dept.promotion_channel_id, embed)
+        channel_error = await send_embed_to_channel(target_guild, dept.promotion_channel_id, embed)
         if dept.log_channel_id is not None and dept.log_channel_id != dept.promotion_channel_id:
-            await send_embed_to_channel(member.guild, dept.log_channel_id, embed)
+            await send_embed_to_channel(target_guild, dept.log_channel_id, embed)
 
         message = (
-            f"Demoted {member.mention} in {dept.label} from "
+            f"Demoted {target_member.mention} in {dept.label} on **{target_guild.name}** from "
             f"{format_role_names(current_roles)} to {format_role_names(target_roles)}."
         )
         if roles_to_remove:

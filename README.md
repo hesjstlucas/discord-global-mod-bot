@@ -72,7 +72,7 @@ py bot.py
 ## Command syncing
 
 - This Python version syncs slash commands automatically when the bot starts.
-- If `REGISTER_GUILD_ID` is set, commands sync to that server on boot and show up quickly.
+- If `REGISTER_GUILD_ID` or `DEPARTMENT_COMMAND_GUILD_IDS` is set, commands sync to those servers plus the configured department guilds on boot and show up quickly.
 - If `REGISTER_GUILD_ID` is blank, commands sync globally and Discord can take a while to show them.
 
 ## Railway
@@ -83,6 +83,7 @@ Set these variables in Railway:
 DISCORD_TOKEN=your-bot-token
 CLIENT_ID=your-application-client-id
 REGISTER_GUILD_ID=
+DEPARTMENT_COMMAND_GUILD_IDS=
 OWNER_USER_IDS=
 MOD_ROLE_IDS=
 GLOBAL_BAN_GUILD_IDS=
@@ -111,12 +112,14 @@ Then:
 - `GLOBAL_BAN_GUILD_IDS` can contain comma-separated server IDs. If set, global ban commands only apply to those servers.
 - `GLOBAL_MESSAGE_CHANNEL_MAP` uses `guild_id:channel_id,guild_id:channel_id`. `/globalmessage` sends to those channels in the targeted guilds.
 - `DEPARTMENTS_CONFIG_PATH` points to the department JSON file used by `/dep` commands.
+- `DEPARTMENT_COMMAND_GUILD_IDS` can contain comma-separated main/server IDs where `/dep` commands are allowed to be run, even if the department itself belongs to another guild.
 
 ## Department Commands
 
 - Department commands are defined in `depcmds.py`.
 - I assumed each `/dep` command needs a target member, even though your shorthand omitted it.
-- These commands are role-based department actions inside the current guild, not Discord server bans.
+- These commands are role-based department actions against the configured department guild, not Discord server bans.
+- `/dep` can be run in the department guild itself or in any server listed in `DEPARTMENT_COMMAND_GUILD_IDS` (and `REGISTER_GUILD_ID` is also treated as an allowed command server).
 - `kick` removes the configured department roles from the member.
 - `ban` removes the configured department roles. If you still define an optional `ban_role_id`, the bot adds that too.
 - `infract warn` and `infract strike` log the action. `infract terminate` removes configured department roles above the configured termination floor role.

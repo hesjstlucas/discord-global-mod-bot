@@ -185,6 +185,7 @@ def format_ban_list(entries: list[dict]) -> str:
 class BotConfig:
     token: str
     register_guild_id: Optional[int]
+    department_command_guild_ids: set[int]
     owner_user_ids: set[int]
     mod_role_ids: set[int]
     global_ban_guild_ids: set[int]
@@ -201,6 +202,7 @@ class BotConfig:
                 if os.getenv("REGISTER_GUILD_ID", "").strip()
                 else None
             ),
+            department_command_guild_ids=split_csv(os.getenv("DEPARTMENT_COMMAND_GUILD_IDS", "")),
             owner_user_ids=split_csv(os.getenv("OWNER_USER_IDS", "")),
             mod_role_ids=split_csv(os.getenv("MOD_ROLE_IDS", "")),
             global_ban_guild_ids=split_csv(os.getenv("GLOBAL_BAN_GUILD_IDS", "")),
@@ -286,13 +288,13 @@ class GlobalModBot(commands.Bot):
             self.register_commands()
             self._commands_registered = True
 
-        if self.config.register_guild_id is not None:
-            guild = discord.Object(id=self.config.register_guild_id)
-            self.tree.copy_global_to(guild=guild)
-            synced = await self.tree.sync(guild=guild)
-            print(
-                f"Synced {len(synced)} command(s) to guild {self.config.register_guild_id}."
-            )
+        sync_guild_ids = sorted(self.get_department_command_guild_ids(include_departments=True))
+        if sync_guild_ids:
+            for guild_id in sync_guild_ids:
+                guild = discord.Object(id=guild_id)
+                self.tree.copy_global_to(guild=guild)
+                synced = await self.tree.sync(guild=guild)
+                print(f"Synced {len(synced)} command(s) to guild {guild_id}.")
         else:
             synced = await self.tree.sync()
             print(f"Synced {len(synced)} global command(s).")
@@ -830,6 +832,18 @@ class GlobalModBot(commands.Bot):
         for guild in target_guilds:
             results.append(await self.send_global_message_to_guild(guild, message))
         return results
+
+    def get_department_command_guild_ids(self, *, include_departments: bool = False) -> set[int]:
+        guild_ids = set(self.config.department_command_guild_ids)
+        if self.config.register_guild_id is not None:
+            guild_ids.add(self.config.register_guild_id)
+
+        if include_departments:
+            for department in self.department_registry.departments.values():
+                if department.guild_id is not None:
+                    guild_ids.add(department.guild_id)
+
+        return guild_ids
 
     def get_target_guilds(self) -> tuple[list[discord.Guild], list[int]]:
         if not self.config.global_ban_guild_ids:
