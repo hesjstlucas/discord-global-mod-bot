@@ -637,9 +637,59 @@ class GlobalModBot(commands.Bot):
             return False
         return bot_member.top_role > member.top_role
 
+    async def get_member_if_present(
+        self, guild: discord.Guild, user_id: int
+    ) -> Optional[discord.Member]:
+        member = guild.get_member(user_id)
+        if member is not None:
+            return member
+
+        try:
+            return await guild.fetch_member(user_id)
+        except discord.NotFound:
+            return None
+        except discord.Forbidden:
+            return None
+        except discord.HTTPException:
+            return None
+
+    async def get_global_ban_blocker(
+        self, guild: discord.Guild, user_id: int
+    ) -> Optional[str]:
+        bot_member = guild.me
+        if bot_member is None:
+            return "Bot member is not available in this server."
+
+        if not bot_member.guild_permissions.ban_members:
+            return "Bot is missing the Ban Members permission."
+
+        target_member = await self.get_member_if_present(guild, user_id)
+        if target_member is None:
+            return None
+
+        if target_member.id == guild.owner_id:
+            return "Cannot ban the server owner."
+
+        if target_member.id == bot_member.id:
+            return "Cannot ban the bot itself."
+
+        if bot_member.top_role <= target_member.top_role:
+            return "Bot role is not above the target user's top role."
+
+        return None
+
     async def apply_global_ban_to_guild(
         self, guild: discord.Guild, user_id: int, entry: dict
     ) -> dict:
+        blocker = await self.get_global_ban_blocker(guild, user_id)
+        if blocker is not None:
+            return {
+                "guild_id": guild.id,
+                "guild_name": guild.name,
+                "status": "failed",
+                "reason": blocker,
+            }
+
         try:
             await guild.ban(discord.Object(id=user_id), reason=build_global_ban_reason(entry))
             return {
@@ -658,6 +708,23 @@ class GlobalModBot(commands.Bot):
     async def lift_global_ban_from_guild(
         self, guild: discord.Guild, user_id: int, reason: str
     ) -> dict:
+        bot_member = guild.me
+        if bot_member is None:
+            return {
+                "guild_id": guild.id,
+                "guild_name": guild.name,
+                "status": "failed",
+                "reason": "Bot member is not available in this server.",
+            }
+
+        if not bot_member.guild_permissions.ban_members:
+            return {
+                "guild_id": guild.id,
+                "guild_name": guild.name,
+                "status": "failed",
+                "reason": "Bot is missing the Ban Members permission.",
+            }
+
         try:
             try:
                 await guild.fetch_ban(discord.Object(id=user_id))
