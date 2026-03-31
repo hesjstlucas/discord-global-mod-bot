@@ -228,23 +228,32 @@ def build_global_ban_request_embed(request: dict) -> discord.Embed:
         value=str(request.get("reason", "No reason provided"))[:1024],
         inline=False,
     )
-    proof_note = str(request.get("proof", "No proof provided")).strip() or "No proof provided"
-    embed.add_field(
-        name="Proof",
-        value=proof_note[:1024],
-        inline=False,
-    )
-    proof_file_url = str(request.get("proof_file_url", "")).strip()
-    if proof_file_url:
-        proof_file_name = str(request.get("proof_file_name", "uploaded-file")).strip() or "uploaded-file"
+    proof_url = str(request.get("proof_url") or request.get("proof_file_url", "")).strip()
+    proof_name = str(request.get("proof_name") or request.get("proof_file_name", "uploaded-file")).strip()
+    proof_content_type = str(
+        request.get("proof_content_type") or request.get("proof_file_content_type", "")
+    ).lower()
+    legacy_proof_note = str(request.get("proof", "")).strip()
+    if proof_url:
         embed.add_field(
-            name="Proof File",
-            value=f"[{proof_file_name}]({proof_file_url})"[:1024],
+            name="Proof",
+            value=f"[{proof_name or 'uploaded-file'}]({proof_url})"[:1024],
             inline=False,
         )
-        proof_content_type = str(request.get("proof_file_content_type", "")).lower()
         if proof_content_type.startswith("image/"):
-            embed.set_image(url=proof_file_url)
+            embed.set_image(url=proof_url)
+    elif legacy_proof_note:
+        embed.add_field(
+            name="Proof",
+            value=legacy_proof_note[:1024],
+            inline=False,
+        )
+    else:
+        embed.add_field(
+            name="Proof",
+            value="No proof provided",
+            inline=False,
+        )
     embed.add_field(
         name="Requested In",
         value=(
@@ -657,28 +666,19 @@ class GlobalModBot(commands.Bot):
         @app_commands.describe(
             user="User to request a global ban for",
             reason="Reason for the global ban request",
-            proof="Optional proof note or explanation",
-            proof_file="Optional proof image or file upload",
+            proof="Proof image or file upload",
         )
         async def gbanrequest(
             interaction: discord.Interaction,
             user: discord.User,
             reason: str,
-            proof: Optional[str] = None,
-            proof_file: Optional[discord.Attachment] = None,
+            proof: discord.Attachment,
         ) -> None:
             if not await self.ensure_access(interaction, "ban_members"):
                 return
 
             await interaction.response.defer(ephemeral=True, thinking=True)
             normalized_reason = normalize_reason(reason)
-            normalized_proof = (proof or "").strip()
-            if not normalized_proof and proof_file is None:
-                await interaction.edit_original_response(
-                    content="Add either a proof note or a proof file before submitting the request."
-                )
-                return
-
             request_id = uuid4().hex[:12]
             request = {
                 "request_id": request_id,
@@ -688,10 +688,9 @@ class GlobalModBot(commands.Bot):
                 "request_guild_id": str(interaction.guild_id or "unknown"),
                 "request_guild_name": interaction.guild.name if interaction.guild else "Unknown Server",
                 "reason": normalized_reason,
-                "proof": (normalized_proof or "No proof note provided")[:1024],
-                "proof_file_url": str(getattr(proof_file, "url", "")).strip()[:1024],
-                "proof_file_name": str(getattr(proof_file, "filename", "")).strip()[:255],
-                "proof_file_content_type": str(getattr(proof_file, "content_type", "")).strip()[:255],
+                "proof_url": str(getattr(proof, "url", "")).strip()[:1024],
+                "proof_name": str(getattr(proof, "filename", "")).strip()[:255],
+                "proof_content_type": str(getattr(proof, "content_type", "")).strip()[:255],
                 "created_at": utc_now_iso(),
                 "status": "pending",
                 "request_message_id": None,

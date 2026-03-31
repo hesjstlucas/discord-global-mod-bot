@@ -14,7 +14,7 @@ Discord bots do **not** receive user IP addresses from the Discord API, so a rea
 ## Commands
 
 - `/gban user reason`
-- `/gbanrequest user reason [proof] [proof_file]`
+- `/gbanrequest user reason proof`
 - `/ungban user_id reason`
 - `/gbanlist`
 - `/syncgbans`
@@ -117,7 +117,7 @@ Then:
 - `GLOBAL_BAN_GUILD_IDS` can contain comma-separated server IDs. If set, global ban commands only apply to those servers.
 - `GLOBAL_BAN_LOG_CHANNEL_ID` can point to a channel in your main server where `/gban`, `/ungban`, and `/syncgbans` actions are logged.
 - `/gbanrequest` also posts approval requests to that same channel, and only `OWNER_USER_IDS` can approve or deny them.
-- `/gbanrequest` accepts either a proof note, a proof file upload, or both. Image uploads preview in the owner review embed.
+- `/gbanrequest` requires a proof file upload. Image uploads preview in the owner review embed.
 - `GLOBAL_MESSAGE_CHANNEL_MAP` uses `guild_id:channel_id,guild_id:channel_id`. `/globalmessage` sends to those channels in the targeted guilds.
 - `DEPARTMENTS_CONFIG_PATH` points to the department JSON file used by `/dep` commands.
 - `DEPARTMENT_COMMAND_GUILD_IDS` can contain comma-separated main/server IDs where `/dep` commands are allowed to be run, even if the department itself belongs to another guild.
