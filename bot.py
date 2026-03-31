@@ -48,6 +48,13 @@ def split_csv(value: str) -> set[int]:
     return result
 
 
+def parse_optional_id(value: str) -> Optional[int]:
+    value = value.strip()
+    if value.isdigit():
+        return int(value)
+    return None
+
+
 def parse_guild_channel_map(value: str) -> dict[int, int]:
     result: dict[int, int] = {}
     for item in value.split(","):
@@ -189,6 +196,7 @@ class BotConfig:
     owner_user_ids: set[int]
     mod_role_ids: set[int]
     global_ban_guild_ids: set[int]
+    global_ban_log_channel_id: Optional[int]
     global_message_channel_map: dict[int, int]
     departments_config_path: Path
     data_file_path: Path
@@ -206,6 +214,7 @@ class BotConfig:
             owner_user_ids=split_csv(os.getenv("OWNER_USER_IDS", "")),
             mod_role_ids=split_csv(os.getenv("MOD_ROLE_IDS", "")),
             global_ban_guild_ids=split_csv(os.getenv("GLOBAL_BAN_GUILD_IDS", "")),
+            global_ban_log_channel_id=parse_optional_id(os.getenv("GLOBAL_BAN_LOG_CHANNEL_ID", "")),
             global_message_channel_map=parse_guild_channel_map(
                 os.getenv("GLOBAL_MESSAGE_CHANNEL_MAP", "")
             ),
@@ -354,8 +363,9 @@ class GlobalModBot(commands.Bot):
                 return
 
             await interaction.response.defer(ephemeral=True, thinking=True)
+            normalized_reason = normalize_reason(reason)
             entry = {
-                "reason": normalize_reason(reason),
+                "reason": normalized_reason,
                 "moderator_id": str(interaction.user.id),
                 "moderator_tag": str(interaction.user),
                 "created_at": utc_now_iso(),
@@ -370,12 +380,34 @@ class GlobalModBot(commands.Bot):
                 if already_banned
                 else f"Added <@{user.id}> to the global ban list."
             )
+            response_text = (
+                f"{prefix}\n\n"
+                f"{format_target_scope(targeted_guilds, missing_guild_ids)}\n"
+                f"{summarize_results(results)}"
+            )
+            log_embed = discord.Embed(
+                title="Global Ban Updated" if already_banned else "Global Ban Issued",
+                color=discord.Color.red(),
+                timestamp=datetime.now(timezone.utc),
+            )
+            log_embed.add_field(name="User", value=f"{user.mention} (`{user.id}`)", inline=False)
+            log_embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=False)
+            log_embed.add_field(name="Reason", value=normalized_reason[:1024], inline=False)
+            log_embed.add_field(
+                name="Scope",
+                value=format_target_scope(targeted_guilds, missing_guild_ids)[:1024],
+                inline=False,
+            )
+            log_embed.add_field(
+                name="Results",
+                value=summarize_results(results)[:1024],
+                inline=False,
+            )
+            log_notice = await self.send_global_ban_log(log_embed)
+            if log_notice is not None:
+                response_text += f"\nLog channel notice: {log_notice}"
             await interaction.edit_original_response(
-                content=(
-                    f"{prefix}\n\n"
-                    f"{format_target_scope(targeted_guilds, missing_guild_ids)}\n"
-                    f"{summarize_results(results)}"
-                )
+                content=response_text
             )
 
         @self.tree.command(name="ungban", description="Remove a user ID from the global ban list and unban them.")
@@ -400,16 +432,39 @@ class GlobalModBot(commands.Bot):
                 )
                 return
 
-            unban_reason = f"Global unban by {interaction.user.id} | {normalize_reason(reason)}"[:512]
+            normalized_reason = normalize_reason(reason)
+            unban_reason = f"Global unban by {interaction.user.id} | {normalized_reason}"[:512]
             results, targeted_guilds, missing_guild_ids = await self.lift_global_ban_everywhere(
                 int(user_id), unban_reason
             )
+            response_text = (
+                f"Removed `{user_id}` from the global ban list.\n\n"
+                f"{format_target_scope(targeted_guilds, missing_guild_ids)}\n"
+                f"{summarize_results(results)}"
+            )
+            log_embed = discord.Embed(
+                title="Global Ban Removed",
+                color=discord.Color.green(),
+                timestamp=datetime.now(timezone.utc),
+            )
+            log_embed.add_field(name="User ID", value=f"`{user_id}`", inline=False)
+            log_embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=False)
+            log_embed.add_field(name="Reason", value=normalized_reason[:1024], inline=False)
+            log_embed.add_field(
+                name="Scope",
+                value=format_target_scope(targeted_guilds, missing_guild_ids)[:1024],
+                inline=False,
+            )
+            log_embed.add_field(
+                name="Results",
+                value=summarize_results(results)[:1024],
+                inline=False,
+            )
+            log_notice = await self.send_global_ban_log(log_embed)
+            if log_notice is not None:
+                response_text += f"\nLog channel notice: {log_notice}"
             await interaction.edit_original_response(
-                content=(
-                    f"Removed `{user_id}` from the global ban list.\n\n"
-                    f"{format_target_scope(targeted_guilds, missing_guild_ids)}\n"
-                    f"{summarize_results(results)}"
-                )
+                content=response_text
             )
 
         @self.tree.command(name="gbanlist", description="Show stored global bans.")
@@ -443,13 +498,34 @@ class GlobalModBot(commands.Bot):
                 results.extend(batch_results)
 
             targeted_guilds, missing_guild_ids = self.get_target_guilds()
+            response_text = (
+                f"Re-applied {len(entries)} stored global ban(s).\n\n"
+                f"{format_target_scope(targeted_guilds, missing_guild_ids)}\n"
+                f"{summarize_results(results)}"
+            )
+            log_embed = discord.Embed(
+                title="Global Ban Sync",
+                color=discord.Color.blurple(),
+                timestamp=datetime.now(timezone.utc),
+            )
+            log_embed.add_field(name="Moderator", value=f"{interaction.user.mention}", inline=False)
+            log_embed.add_field(name="Stored Entries", value=str(len(entries)), inline=False)
+            log_embed.add_field(
+                name="Scope",
+                value=format_target_scope(targeted_guilds, missing_guild_ids)[:1024],
+                inline=False,
+            )
+            log_embed.add_field(
+                name="Results",
+                value=summarize_results(results)[:1024],
+                inline=False,
+            )
+            log_notice = await self.send_global_ban_log(log_embed)
+            if log_notice is not None:
+                response_text += f"\nLog channel notice: {log_notice}"
 
             await interaction.edit_original_response(
-                content=(
-                    f"Re-applied {len(entries)} stored global ban(s).\n\n"
-                    f"{format_target_scope(targeted_guilds, missing_guild_ids)}\n"
-                    f"{summarize_results(results)}"
-                )
+                content=response_text
             )
 
         @self.tree.command(name="ban", description="Ban a user from this server.")
@@ -806,6 +882,27 @@ class GlobalModBot(commands.Bot):
                 "status": "failed",
                 "reason": summarize_exception(error),
             }
+
+    async def send_global_ban_log(self, embed: discord.Embed) -> Optional[str]:
+        channel_id = self.config.global_ban_log_channel_id
+        if channel_id is None:
+            return None
+
+        channel = self.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.fetch_channel(channel_id)
+            except Exception as error:
+                return summarize_exception(error)
+
+        if not hasattr(channel, "send"):
+            return "Configured global ban log channel is not messageable."
+
+        try:
+            await channel.send(embed=embed)
+            return None
+        except Exception as error:
+            return summarize_exception(error)
 
     async def apply_global_ban_everywhere(
         self, user_id: int, entry: dict

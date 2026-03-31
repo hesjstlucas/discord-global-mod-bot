@@ -89,6 +89,7 @@ DEPARTMENT_COMMAND_GUILD_IDS=
 OWNER_USER_IDS=
 MOD_ROLE_IDS=
 GLOBAL_BAN_GUILD_IDS=
+GLOBAL_BAN_LOG_CHANNEL_ID=
 GLOBAL_MESSAGE_CHANNEL_MAP=
 DEPARTMENTS_CONFIG_PATH=departments.json
 DATA_FILE_PATH=/app/data/moderation-store.json
@@ -112,6 +113,7 @@ Then:
 - Timeout duration format examples: `10m`, `2h`, `3d`.
 - Purge skips messages older than 14 days because Discord bulk delete does.
 - `GLOBAL_BAN_GUILD_IDS` can contain comma-separated server IDs. If set, global ban commands only apply to those servers.
+- `GLOBAL_BAN_LOG_CHANNEL_ID` can point to a channel in your main server where `/gban`, `/ungban`, and `/syncgbans` actions are logged.
 - `GLOBAL_MESSAGE_CHANNEL_MAP` uses `guild_id:channel_id,guild_id:channel_id`. `/globalmessage` sends to those channels in the targeted guilds.
 - `DEPARTMENTS_CONFIG_PATH` points to the department JSON file used by `/dep` commands.
 - `DEPARTMENT_COMMAND_GUILD_IDS` can contain comma-separated main/server IDs where `/dep` commands are allowed to be run, even if the department itself belongs to another guild.
