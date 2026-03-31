@@ -128,6 +128,7 @@ Then:
 - `promote` accepts one of the configured department roles, then assigns the full linked rank step for that role. If a rank step contains multiple roles, the bot gives all of them together.
 - `demote` uses that same ordered `promotion_role_ids` list and moves the member down exactly one configured rank.
 - `division promote` and `division demote` do the same thing for a configured division under the selected department.
+- If `command_role_ids` is configured, the moderator must have every listed role in the target department guild before the command will run.
 
 ## Department Config
 
@@ -140,12 +141,13 @@ Then:
   - `promotion_channel_id`: where promotion and demotion embeds go
 - Optional fields:
   - `label`: display name used in command output; if you omit it, the department key is used
+  - `command_role_ids`: optional list of role IDs the moderator must all have to run that department's `/dep` commands
   - `member_role_ids`: extra membership roles to remove during kick, ban, or terminate
   - `managed_role_ids`: extra department roles to remove during kick, ban, or terminate
   - `ban_role_id`: optional department blacklist role added by `/dep ban`
 - Division fields:
   - `divisions`: optional object keyed by division name
-  - each division can define `label`, `promotion_role_ids`, `log_channel_id`, and `promotion_channel_id`
+  - each division can define `label`, `command_role_ids`, `promotion_role_ids`, `log_channel_id`, and `promotion_channel_id`
   - if a division omits channel IDs, it falls back to the parent department channels
 - In `/dep promote`, choose the department first. The `role` field then autocompletes only the configured roles for that department. Picking any role from a linked bundle assigns the whole bundle.
 - In `/dep division promote` and `/dep division demote`, choose the department first, then the division. The `role` field autocompletes only the configured roles for that division.

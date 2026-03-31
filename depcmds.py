@@ -102,6 +102,7 @@ class DivisionConfig:
     key: str
     label: str
     promotion_steps: tuple[tuple[int, ...], ...]
+    command_role_ids: set[int]
     log_channel_id: Optional[int]
     promotion_channel_id: Optional[int]
 
@@ -117,6 +118,7 @@ class DepartmentConfig:
     guild_id: Optional[int]
     member_role_ids: set[int]
     promotion_steps: tuple[tuple[int, ...], ...]
+    command_role_ids: set[int]
     divisions: dict[str, DivisionConfig]
     managed_role_ids: set[int]
     log_channel_id: Optional[int]
@@ -212,6 +214,7 @@ class DepartmentRegistry:
                         key=division_key,
                         label=division_label,
                         promotion_steps=parse_id_steps(raw_division_value.get("promotion_role_ids")),
+                        command_role_ids=parse_id_set(raw_division_value.get("command_role_ids")),
                         log_channel_id=parse_optional_id(raw_division_value.get("log_channel_id"))
                         or default_log_channel_id,
                         promotion_channel_id=parse_optional_id(
@@ -226,6 +229,7 @@ class DepartmentRegistry:
                 guild_id=parse_optional_id(raw_value.get("guild_id")),
                 member_role_ids=parse_id_set(raw_value.get("member_role_ids")),
                 promotion_steps=parse_id_steps(raw_value.get("promotion_role_ids")),
+                command_role_ids=parse_id_set(raw_value.get("command_role_ids")),
                 divisions=divisions,
                 managed_role_ids=parse_id_set(raw_value.get("managed_role_ids")),
                 log_channel_id=default_log_channel_id,
@@ -461,6 +465,61 @@ async def resolve_department_member(
     return None
 
 
+async def ensure_department_command_roles(
+    bot: GlobalModBot,
+    interaction: discord.Interaction,
+    target_guild: discord.Guild,
+    department: DepartmentConfig,
+    division: Optional[DivisionConfig] = None,
+) -> bool:
+    required_role_ids = set(department.command_role_ids)
+    if division is not None:
+        required_role_ids.update(division.command_role_ids)
+
+    if not required_role_ids:
+        return True
+
+    moderator_member = await bot.get_member_if_present(target_guild, interaction.user.id)
+    if moderator_member is None:
+        await bot.send_ephemeral(
+            interaction,
+            f"You must be a member of **{target_guild.name}** to use {department.label} commands.",
+        )
+        return False
+
+    moderator_role_ids = {role.id for role in moderator_member.roles}
+    missing_role_ids = [role_id for role_id in required_role_ids if role_id not in moderator_role_ids]
+    if not missing_role_ids:
+        return True
+
+    missing_roles: list[discord.Role] = []
+    unresolved_ids: list[int] = []
+    for role_id in missing_role_ids:
+        role = target_guild.get_role(role_id)
+        if role is None:
+            unresolved_ids.append(role_id)
+            continue
+        missing_roles.append(role)
+
+    missing_text = format_role_names(missing_roles)
+    if unresolved_ids:
+        unresolved_text = format_role_ids(unresolved_ids)
+        missing_text = (
+            unresolved_text
+            if missing_text == "none"
+            else f"{missing_text}, {unresolved_text}"
+        )
+
+    target_label = (
+        f"{department.label} / {division.label}" if division is not None else department.label
+    )
+    await bot.send_ephemeral(
+        interaction,
+        f"You need all configured command roles for {target_label}: {missing_text}.",
+    )
+    return False
+
+
 async def resolve_division_for_interaction(
     bot: GlobalModBot,
     interaction: discord.Interaction,
@@ -636,6 +695,9 @@ def register_department_commands(bot: GlobalModBot) -> None:
             return
         dept, target_guild = resolved
 
+        if not await ensure_department_command_roles(bot, interaction, target_guild, dept):
+            return
+
         target_member = await resolve_department_member(bot, interaction, target_guild, member)
         if target_member is None:
             return
@@ -707,6 +769,9 @@ def register_department_commands(bot: GlobalModBot) -> None:
         if resolved is None:
             return
         dept, target_guild = resolved
+
+        if not await ensure_department_command_roles(bot, interaction, target_guild, dept):
+            return
 
         target_member = await resolve_department_member(bot, interaction, target_guild, member)
         if target_member is None:
@@ -810,6 +875,9 @@ def register_department_commands(bot: GlobalModBot) -> None:
             return
         dept, target_guild = resolved
 
+        if not await ensure_department_command_roles(bot, interaction, target_guild, dept):
+            return
+
         target_member = await resolve_department_member(bot, interaction, target_guild, member)
         if target_member is None:
             return
@@ -911,6 +979,9 @@ def register_department_commands(bot: GlobalModBot) -> None:
         if resolved is None:
             return
         dept, target_guild = resolved
+
+        if not await ensure_department_command_roles(bot, interaction, target_guild, dept):
+            return
 
         if not dept.promotion_steps:
             await bot.send_ephemeral(
@@ -1083,6 +1154,9 @@ def register_department_commands(bot: GlobalModBot) -> None:
             return
         dept, target_guild = resolved
 
+        if not await ensure_department_command_roles(bot, interaction, target_guild, dept):
+            return
+
         target_member = await resolve_department_member(bot, interaction, target_guild, member)
         if target_member is None:
             return
@@ -1226,6 +1300,11 @@ def register_department_commands(bot: GlobalModBot) -> None:
 
         division_config = await resolve_division_for_interaction(bot, interaction, dept, division)
         if division_config is None:
+            return
+
+        if not await ensure_department_command_roles(
+            bot, interaction, target_guild, dept, division_config
+        ):
             return
 
         if not division_config.promotion_steps:
@@ -1417,6 +1496,11 @@ def register_department_commands(bot: GlobalModBot) -> None:
 
         division_config = await resolve_division_for_interaction(bot, interaction, dept, division)
         if division_config is None:
+            return
+
+        if not await ensure_department_command_roles(
+            bot, interaction, target_guild, dept, division_config
+        ):
             return
 
         if not division_config.promotion_steps:
