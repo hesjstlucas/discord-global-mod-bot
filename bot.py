@@ -308,6 +308,7 @@ class BotConfig:
     mod_role_ids: set[int]
     global_ban_guild_ids: set[int]
     global_ban_log_channel_id: Optional[int]
+    department_log_mirror_channel_id: Optional[int]
     global_message_channel_map: dict[int, int]
     departments_config_path: Path
     data_file_path: Path
@@ -326,6 +327,9 @@ class BotConfig:
             mod_role_ids=split_csv(os.getenv("MOD_ROLE_IDS", "")),
             global_ban_guild_ids=split_csv(os.getenv("GLOBAL_BAN_GUILD_IDS", "")),
             global_ban_log_channel_id=parse_optional_id(os.getenv("GLOBAL_BAN_LOG_CHANNEL_ID", "")),
+            department_log_mirror_channel_id=parse_optional_id(
+                os.getenv("DEPARTMENT_LOG_MIRROR_CHANNEL_ID", "")
+            ),
             global_message_channel_map=parse_guild_channel_map(
                 os.getenv("GLOBAL_MESSAGE_CHANNEL_MAP", "")
             ),
@@ -1190,9 +1194,20 @@ class GlobalModBot(commands.Bot):
             }
 
     async def send_global_ban_log(self, embed: discord.Embed) -> Optional[str]:
-        channel_id = self.config.global_ban_log_channel_id
+        return await self.send_embed_to_channel_id(
+            self.config.global_ban_log_channel_id,
+            embed,
+        )
+
+    async def send_embed_to_channel_id(
+        self,
+        channel_id: Optional[int],
+        embed: discord.Embed,
+        *,
+        not_configured_message: Optional[str] = None,
+    ) -> Optional[str]:
         if channel_id is None:
-            return None
+            return not_configured_message
 
         channel = self.get_channel(channel_id)
         if channel is None:
@@ -1202,7 +1217,7 @@ class GlobalModBot(commands.Bot):
                 return summarize_exception(error)
 
         if not hasattr(channel, "send"):
-            return "Configured global ban log channel is not messageable."
+            return "Configured log channel is not messageable."
 
         try:
             await channel.send(embed=embed)

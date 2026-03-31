@@ -345,6 +345,36 @@ async def send_embed_to_channel(
         return str(error)
 
 
+def clone_embed(embed: discord.Embed) -> discord.Embed:
+    return discord.Embed.from_dict(embed.to_dict())
+
+
+async def mirror_department_embed(
+    bot: GlobalModBot,
+    source_guild: discord.Guild,
+    source_channel_id: Optional[int],
+    embed: discord.Embed,
+) -> Optional[str]:
+    mirror_channel_id = bot.config.department_log_mirror_channel_id
+    if mirror_channel_id is None:
+        return None
+
+    mirror_embed = clone_embed(embed)
+    mirror_embed.add_field(
+        name="Source Server",
+        value=f"{source_guild.name} (`{source_guild.id}`)"[:1024],
+        inline=False,
+    )
+    if source_channel_id is not None:
+        mirror_embed.add_field(
+            name="Source Channel ID",
+            value=f"`{source_channel_id}`",
+            inline=False,
+        )
+
+    return await bot.send_embed_to_channel_id(mirror_channel_id, mirror_embed)
+
+
 def get_member_department_roles(
     member: discord.Member, department: DepartmentConfig, *, include_ban_role: bool = False
 ) -> list[discord.Role]:
@@ -763,6 +793,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
         )
         embed.add_field(name="Removed Roles", value=format_role_names(roles_to_remove), inline=False)
         log_error = await send_embed_to_channel(target_guild, dept.log_channel_id, embed)
+        mirror_error = await mirror_department_embed(bot, target_guild, dept.log_channel_id, embed)
 
         message = (
             f"Removed {target_member.mention} from {dept.label} in **{target_guild.name}**.\n"
@@ -770,6 +801,8 @@ def register_department_commands(bot: GlobalModBot) -> None:
         )
         if log_error is not None:
             message += f"\nLog channel notice: {log_error}"
+        if mirror_error is not None:
+            message += f"\nMain server log notice: {mirror_error}"
 
         await interaction.edit_original_response(content=message)
 
@@ -846,12 +879,15 @@ def register_department_commands(bot: GlobalModBot) -> None:
         embed.add_field(name="Removed Roles", value=format_role_names(roles_to_remove), inline=False)
         embed.add_field(name="Ban Type", value="Server ban", inline=False)
         log_error = await send_embed_to_channel(target_guild, dept.log_channel_id, embed)
+        mirror_error = await mirror_department_embed(bot, target_guild, dept.log_channel_id, embed)
 
         message = f"Banned <@{member.id}> from {dept.label} in **{target_guild.name}**."
         if roles_to_remove:
             message += f"\nRemoved roles: {format_role_names(roles_to_remove)}."
         if log_error is not None:
             message += f"\nLog channel notice: {log_error}"
+        if mirror_error is not None:
+            message += f"\nMain server log notice: {mirror_error}"
 
         await interaction.edit_original_response(content=message)
 
@@ -952,6 +988,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
                 inline=False,
             )
         log_error = await send_embed_to_channel(target_guild, dept.log_channel_id, embed)
+        mirror_error = await mirror_department_embed(bot, target_guild, dept.log_channel_id, embed)
 
         message = (
             f"Logged a {action_value} infraction for {target_member.mention} in {dept.label} "
@@ -961,6 +998,8 @@ def register_department_commands(bot: GlobalModBot) -> None:
             message += f"\nRemoved roles: {format_role_names(removed_roles)}."
         if log_error is not None:
             message += f"\nLog channel notice: {log_error}"
+        if mirror_error is not None:
+            message += f"\nMain server log notice: {mirror_error}"
 
         await interaction.edit_original_response(content=message)
 
@@ -1118,6 +1157,12 @@ def register_department_commands(bot: GlobalModBot) -> None:
         )
         if dept.log_channel_id is not None and dept.log_channel_id != dept.promotion_channel_id:
             await send_embed_to_channel(target_guild, dept.log_channel_id, embed)
+        mirror_error = await mirror_department_embed(
+            bot,
+            target_guild,
+            dept.promotion_channel_id or dept.log_channel_id,
+            embed,
+        )
 
         if previous_step is None:
             message = (
@@ -1140,6 +1185,8 @@ def register_department_commands(bot: GlobalModBot) -> None:
             message += f"\nRemoved previous roles: {format_role_names(roles_to_remove)}."
         if channel_error is not None:
             message += f"\nPromotion channel notice: {channel_error}"
+        if mirror_error is not None:
+            message += f"\nMain server log notice: {mirror_error}"
 
         await interaction.edit_original_response(content=message)
 
@@ -1267,6 +1314,12 @@ def register_department_commands(bot: GlobalModBot) -> None:
         channel_error = await send_embed_to_channel(target_guild, dept.promotion_channel_id, embed)
         if dept.log_channel_id is not None and dept.log_channel_id != dept.promotion_channel_id:
             await send_embed_to_channel(target_guild, dept.log_channel_id, embed)
+        mirror_error = await mirror_department_embed(
+            bot,
+            target_guild,
+            dept.promotion_channel_id or dept.log_channel_id,
+            embed,
+        )
 
         message = (
             f"Demoted {target_member.mention} in {dept.label} on **{target_guild.name}** from "
@@ -1276,6 +1329,8 @@ def register_department_commands(bot: GlobalModBot) -> None:
             message += f"\nRemoved previous roles: {format_role_names(roles_to_remove)}."
         if channel_error is not None:
             message += f"\nPromotion channel notice: {channel_error}"
+        if mirror_error is not None:
+            message += f"\nMain server log notice: {mirror_error}"
 
         await interaction.edit_original_response(content=message)
 
@@ -1451,6 +1506,12 @@ def register_department_commands(bot: GlobalModBot) -> None:
             and division_config.log_channel_id != division_config.promotion_channel_id
         ):
             await send_embed_to_channel(target_guild, division_config.log_channel_id, embed)
+        mirror_error = await mirror_department_embed(
+            bot,
+            target_guild,
+            division_config.promotion_channel_id or division_config.log_channel_id,
+            embed,
+        )
 
         if previous_step is None:
             message = (
@@ -1472,6 +1533,8 @@ def register_department_commands(bot: GlobalModBot) -> None:
             message += f"\nRemoved previous roles: {format_role_names(roles_to_remove)}."
         if channel_error is not None:
             message += f"\nPromotion channel notice: {channel_error}"
+        if mirror_error is not None:
+            message += f"\nMain server log notice: {mirror_error}"
 
         await interaction.edit_original_response(content=message)
 
@@ -1649,6 +1712,12 @@ def register_department_commands(bot: GlobalModBot) -> None:
             and division_config.log_channel_id != division_config.promotion_channel_id
         ):
             await send_embed_to_channel(target_guild, division_config.log_channel_id, embed)
+        mirror_error = await mirror_department_embed(
+            bot,
+            target_guild,
+            division_config.promotion_channel_id or division_config.log_channel_id,
+            embed,
+        )
 
         message = (
             f"Demoted {target_member.mention} in {dept.label} / {division_config.label} on "
@@ -1659,6 +1728,8 @@ def register_department_commands(bot: GlobalModBot) -> None:
             message += f"\nRemoved previous roles: {format_role_names(roles_to_remove)}."
         if channel_error is not None:
             message += f"\nPromotion channel notice: {channel_error}"
+        if mirror_error is not None:
+            message += f"\nMain server log notice: {mirror_error}"
 
         await interaction.edit_original_response(content=message)
 
