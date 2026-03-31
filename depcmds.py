@@ -297,7 +297,7 @@ def build_department_embed(
     color: discord.Color,
     department: DepartmentConfig,
     division: Optional[DivisionConfig] = None,
-    member: discord.Member,
+    member: discord.abc.Snowflake,
     moderator: discord.abc.User,
     reason: str,
 ) -> discord.Embed:
@@ -305,7 +305,8 @@ def build_department_embed(
     embed.add_field(name="Department", value=department.label, inline=True)
     if division is not None:
         embed.add_field(name="Division", value=division.label, inline=True)
-    embed.add_field(name="Member", value=f"{member.mention} (`{member.id}`)", inline=True)
+    member_mention = getattr(member, "mention", f"<@{member.id}>")
+    embed.add_field(name="Member", value=f"{member_mention} (`{member.id}`)", inline=True)
     embed.add_field(name="Moderator", value=f"{moderator.mention}", inline=True)
     embed.add_field(name="Reason", value=reason[:1024], inline=False)
     return embed
@@ -406,6 +407,15 @@ def bot_can_manage_role(guild: discord.Guild, role: discord.Role) -> bool:
 
 def collect_unmanageable_roles(guild: discord.Guild, roles: list[discord.Role]) -> list[discord.Role]:
     return [role for role in roles if not bot_can_manage_role(guild, role)]
+
+
+def can_bot_ban_in_guild(guild: discord.Guild) -> tuple[bool, str]:
+    bot_member = guild.me
+    if bot_member is None:
+        return False, "Bot member is not available in that server."
+    if not bot_member.guild_permissions.ban_members:
+        return False, "I do not have the Ban Members permission in that server."
+    return True, ""
 
 
 async def resolve_department_for_interaction(
@@ -776,7 +786,7 @@ def register_department_commands(bot: GlobalModBot) -> None:
         department: str,
         reason: str,
     ) -> None:
-        if not await bot.ensure_access(interaction, "manage_roles"):
+        if not await bot.ensure_access(interaction, "ban_members"):
             return
 
         resolved = await resolve_department_for_interaction(bot, interaction, department)
@@ -787,73 +797,59 @@ def register_department_commands(bot: GlobalModBot) -> None:
         if not await ensure_department_command_roles(bot, interaction, target_guild, dept):
             return
 
-        target_member = await resolve_department_member(bot, interaction, target_guild, member)
-        if target_member is None:
+        can_ban, ban_error = can_bot_ban_in_guild(target_guild)
+        if not can_ban:
+            await bot.send_ephemeral(interaction, ban_error)
             return
 
-        if not bot.can_bot_moderate(target_member):
+        target_member = await bot.get_member_if_present(target_guild, member.id)
+        if target_member is not None and not bot.can_bot_moderate(target_member):
             await bot.send_ephemeral(
                 interaction,
                 f"I cannot manage {target_member.mention} because of role hierarchy or missing permissions.",
             )
             return
 
-        roles_to_remove = get_member_department_roles(target_member, dept)
-        unmanageable = collect_unmanageable_roles(target_guild, roles_to_remove)
-        if unmanageable:
-            await bot.send_ephemeral(
-                interaction,
-                f"I cannot remove these roles: {format_role_names(unmanageable)}.",
-            )
-            return
-
-        ban_role = target_guild.get_role(dept.ban_role_id) if dept.ban_role_id is not None else None
-        if dept.ban_role_id is not None and ban_role is None:
-            await bot.send_ephemeral(
-                interaction,
-                f"{dept.label} is missing its configured department ban role.",
-            )
-            return
-
-        if ban_role is not None and not bot_can_manage_role(target_guild, ban_role):
-            await bot.send_ephemeral(
-                interaction,
-                f"I cannot assign the configured ban role `{ban_role.name}`.",
-            )
-            return
+        roles_to_remove: list[discord.Role] = []
+        if target_member is not None:
+            roles_to_remove = get_member_department_roles(target_member, dept)
+            unmanageable = collect_unmanageable_roles(target_guild, roles_to_remove)
+            if unmanageable:
+                await bot.send_ephemeral(
+                    interaction,
+                    f"I cannot remove these roles before banning: {format_role_names(unmanageable)}.",
+                )
+                return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         audit_reason = f"Department ban | {dept.label} | by {interaction.user.id} | {reason}"[:512]
 
-        if roles_to_remove:
+        if target_member is not None and roles_to_remove:
             await target_member.remove_roles(*roles_to_remove, reason=audit_reason)
 
-        added_ban_role = False
-        if ban_role is not None and ban_role not in target_member.roles:
-            await target_member.add_roles(ban_role, reason=audit_reason)
-            added_ban_role = True
+        try:
+            await target_guild.ban(member, reason=audit_reason, delete_message_seconds=0)
+        except Exception as error:
+            await interaction.edit_original_response(
+                content=f"Could not ban <@{member.id}> from **{target_guild.name}**: {error}"
+            )
+            return
 
         embed = build_department_embed(
             title="Department Ban",
             color=discord.Color.red(),
             department=dept,
-            member=target_member,
+            member=target_member or discord.Object(id=member.id),
             moderator=interaction.user,
             reason=reason,
         )
         embed.add_field(name="Removed Roles", value=format_role_names(roles_to_remove), inline=False)
-        embed.add_field(
-            name="Ban Role",
-            value=ban_role.name if added_ban_role and ban_role is not None else "none",
-            inline=False,
-        )
+        embed.add_field(name="Ban Type", value="Server ban", inline=False)
         log_error = await send_embed_to_channel(target_guild, dept.log_channel_id, embed)
 
-        message = f"Department-banned {target_member.mention} from {dept.label} in **{target_guild.name}**."
+        message = f"Banned <@{member.id}> from {dept.label} in **{target_guild.name}**."
         if roles_to_remove:
             message += f"\nRemoved roles: {format_role_names(roles_to_remove)}."
-        if added_ban_role and ban_role is not None:
-            message += f"\nAdded role: {ban_role.name}."
         if log_error is not None:
             message += f"\nLog channel notice: {log_error}"
 

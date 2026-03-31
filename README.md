@@ -126,10 +126,10 @@ Then:
 
 - Department commands are defined in `depcmds.py`.
 - I assumed each `/dep` command needs a target member, even though your shorthand omitted it.
-- These commands are role-based department actions against the configured department guild, not Discord server bans.
+- Most department commands are role-based department actions against the configured department guild. `/dep ban` now issues a real Discord server ban in that department guild.
 - `/dep` can be run in the department guild itself or in any server listed in `DEPARTMENT_COMMAND_GUILD_IDS` (and `REGISTER_GUILD_ID` is also treated as an allowed command server).
 - `kick` removes the configured department roles from the member.
-- `ban` removes the configured department roles. If you still define an optional `ban_role_id`, the bot adds that too.
+- `ban` issues a real Discord server ban in the department's configured guild. If the user is still in that server, the bot also removes their configured department roles before banning them.
 - `infract warn` and `infract strike` log the action. `infract terminate` removes configured department roles above the configured termination floor role.
 - `promote` accepts one of the configured department roles, then assigns the full linked rank step for that role. If a rank step contains multiple roles, the bot gives all of them together.
 - `demote` uses that same ordered `promotion_role_ids` list and moves the member down exactly one configured rank.
@@ -150,7 +150,7 @@ Then:
   - `command_role_ids`: optional list of role IDs the moderator must all have in the main command server to run that department's `/dep` commands
   - `member_role_ids`: extra membership roles to remove during kick, ban, or terminate
   - `managed_role_ids`: extra department roles to remove during kick, ban, or terminate
-  - `ban_role_id`: optional department blacklist role added by `/dep ban`
+- `ban_role_id`: legacy optional field from the older role-based department ban flow
 - Division fields:
   - `divisions`: optional object keyed by division name
   - each division can define `label`, `command_role_ids`, `promotion_role_ids`, `log_channel_id`, and `promotion_channel_id`
