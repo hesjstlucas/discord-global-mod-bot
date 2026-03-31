@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 import discord
 from discord import app_commands
@@ -188,6 +189,95 @@ def format_ban_list(entries: list[dict]) -> str:
     return f"Stored global bans: {len(entries)}\n```\n" + "\n".join(preview) + suffix + "\n```"
 
 
+def format_status_label(value: str) -> str:
+    return value.replace("_", " ").title()
+
+
+def build_global_ban_request_embed(request: dict) -> discord.Embed:
+    status = request.get("status", "pending")
+    color_map = {
+        "pending": discord.Color.gold(),
+        "approved": discord.Color.green(),
+        "denied": discord.Color.red(),
+        "cancelled": discord.Color.dark_grey(),
+    }
+    title_map = {
+        "pending": "Global Ban Request",
+        "approved": "Global Ban Request Approved",
+        "denied": "Global Ban Request Denied",
+        "cancelled": "Global Ban Request Cancelled",
+    }
+
+    embed = discord.Embed(
+        title=title_map.get(status, "Global Ban Request"),
+        color=color_map.get(status, discord.Color.blurple()),
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(
+        name="Target",
+        value=f"<@{request['user_id']}> (`{request['user_id']}`)",
+        inline=False,
+    )
+    embed.add_field(
+        name="Requested By",
+        value=f"<@{request['requester_id']}> (`{request['requester_id']}`)",
+        inline=False,
+    )
+    embed.add_field(
+        name="Reason",
+        value=str(request.get("reason", "No reason provided"))[:1024],
+        inline=False,
+    )
+    embed.add_field(
+        name="Proof",
+        value=str(request.get("proof", "No proof provided"))[:1024],
+        inline=False,
+    )
+    embed.add_field(
+        name="Requested In",
+        value=(
+            f"{request.get('request_guild_name', 'Unknown Server')} "
+            f"(`{request.get('request_guild_id', 'unknown')}`)"
+        )[:1024],
+        inline=False,
+    )
+    embed.add_field(name="Status", value=format_status_label(status), inline=True)
+    embed.add_field(
+        name="Requested At",
+        value=str(request.get("created_at", "unknown"))[:1024],
+        inline=True,
+    )
+
+    reviewer_id = request.get("reviewer_id")
+    if reviewer_id:
+        embed.add_field(
+            name="Reviewed By",
+            value=f"<@{reviewer_id}> (`{reviewer_id}`)",
+            inline=False,
+        )
+    if request.get("reviewed_at"):
+        embed.add_field(
+            name="Reviewed At",
+            value=str(request["reviewed_at"])[:1024],
+            inline=False,
+        )
+    if request.get("review_note"):
+        embed.add_field(
+            name="Review Note",
+            value=str(request["review_note"])[:1024],
+            inline=False,
+        )
+    if request.get("result_summary"):
+        embed.add_field(
+            name="Result Summary",
+            value=str(request["result_summary"])[:1024],
+            inline=False,
+        )
+
+    embed.set_footer(text=f"Request ID: {request['request_id']}")
+    return embed
+
+
 @dataclass(frozen=True)
 class BotConfig:
     token: str
@@ -232,7 +322,7 @@ class BotConfig:
 class ModerationStore:
     def __init__(self, file_path: Path) -> None:
         self.file_path = file_path
-        self.data = {"global_bans": {}}
+        self.data = {"global_bans": {}, "global_ban_requests": {}}
 
     def load(self) -> None:
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -246,7 +336,13 @@ class ModerationStore:
         global_bans = payload.get("global_bans", {})
         if not isinstance(global_bans, dict):
             global_bans = {}
-        self.data = {"global_bans": global_bans}
+        global_ban_requests = payload.get("global_ban_requests", {})
+        if not isinstance(global_ban_requests, dict):
+            global_ban_requests = {}
+        self.data = {
+            "global_bans": global_bans,
+            "global_ban_requests": global_ban_requests,
+        }
 
     def save(self) -> None:
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -275,6 +371,134 @@ class ModerationStore:
             self.save()
         return removed
 
+    def get_global_ban_request(self, request_id: str) -> Optional[dict]:
+        return self.data["global_ban_requests"].get(request_id)
+
+    def list_pending_global_ban_requests(self) -> list[dict]:
+        entries = [
+            request
+            for request in self.data["global_ban_requests"].values()
+            if request.get("status") == "pending" and request.get("request_message_id")
+        ]
+        entries.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+        return entries
+
+    def set_global_ban_request(self, request_id: str, entry: dict) -> None:
+        self.data["global_ban_requests"][request_id] = entry
+        self.save()
+
+    def update_global_ban_request(self, request_id: str, **updates: object) -> Optional[dict]:
+        existing = self.data["global_ban_requests"].get(request_id)
+        if existing is None:
+            return None
+
+        existing.update(updates)
+        self.save()
+        return existing
+
+    def remove_global_ban_request(self, request_id: str) -> Optional[dict]:
+        removed = self.data["global_ban_requests"].pop(request_id, None)
+        if removed is not None:
+            self.save()
+        return removed
+
+
+class GlobalBanRequestView(discord.ui.View):
+    def __init__(self, bot: "GlobalModBot", request_id: str, *, disabled: bool = False) -> None:
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.request_id = request_id
+
+        approve_button = discord.ui.Button(
+            label="Approve",
+            style=discord.ButtonStyle.success,
+            custom_id=f"gbanrequest:approve:{request_id}",
+            disabled=disabled,
+        )
+        deny_button = discord.ui.Button(
+            label="Deny",
+            style=discord.ButtonStyle.danger,
+            custom_id=f"gbanrequest:deny:{request_id}",
+            disabled=disabled,
+        )
+        approve_button.callback = self.approve_callback
+        deny_button.callback = self.deny_callback
+        self.add_item(approve_button)
+        self.add_item(deny_button)
+
+    async def approve_callback(self, interaction: discord.Interaction) -> None:
+        await self.handle_review(interaction, "approved")
+
+    async def deny_callback(self, interaction: discord.Interaction) -> None:
+        await self.handle_review(interaction, "denied")
+
+    async def handle_review(self, interaction: discord.Interaction, action: str) -> None:
+        if interaction.user.id not in self.bot.config.owner_user_ids:
+            await interaction.response.send_message(
+                "Only bot owners can review global ban requests.",
+                ephemeral=True,
+            )
+            return
+
+        request = self.bot.store.get_global_ban_request(self.request_id)
+        if request is None:
+            await interaction.response.send_message(
+                "That global ban request no longer exists.",
+                ephemeral=True,
+            )
+            return
+
+        if request.get("status") != "pending":
+            await interaction.response.send_message(
+                f"This request has already been {request.get('status', 'processed')}.",
+                ephemeral=True,
+            )
+            return
+
+        if action == "approved":
+            entry = {
+                "reason": request["reason"],
+                "moderator_id": str(interaction.user.id),
+                "moderator_tag": str(interaction.user),
+                "created_at": utc_now_iso(),
+            }
+            already_banned = self.bot.store.get_global_ban(int(request["user_id"])) is not None
+            self.bot.store.set_global_ban(int(request["user_id"]), entry)
+            results, targeted_guilds, missing_guild_ids = await self.bot.apply_global_ban_everywhere(
+                int(request["user_id"]), entry
+            )
+            result_summary = (
+                f"{format_target_scope(targeted_guilds, missing_guild_ids)}\n"
+                f"{summarize_results(results)}"
+            )
+            review_note = (
+                "Existing global ban entry updated from request."
+                if already_banned
+                else "Global ban issued from request."
+            )
+        else:
+            result_summary = "Request denied. No global ban was applied."
+            review_note = "Global ban request denied by owner."
+
+        updated = self.bot.store.update_global_ban_request(
+            self.request_id,
+            status=action,
+            reviewer_id=str(interaction.user.id),
+            reviewer_tag=str(interaction.user),
+            reviewed_at=utc_now_iso(),
+            review_note=review_note,
+            result_summary=result_summary,
+        )
+        assert updated is not None
+
+        updated_embed = build_global_ban_request_embed(updated)
+        disabled_view = GlobalBanRequestView(self.bot, self.request_id, disabled=True)
+        await interaction.response.edit_message(embed=updated_embed, view=disabled_view)
+        await interaction.followup.send(
+            result_summary[:2000],
+            ephemeral=True,
+        )
+
 
 class GlobalModBot(commands.Bot):
     def __init__(self, config: BotConfig, store: ModerationStore) -> None:
@@ -296,6 +520,9 @@ class GlobalModBot(commands.Bot):
         if not self._commands_registered:
             self.register_commands()
             self._commands_registered = True
+
+        for request in self.store.list_pending_global_ban_requests():
+            self.add_view(GlobalBanRequestView(self, request["request_id"]))
 
         sync_guild_ids = sorted(self.get_department_command_guild_ids(include_departments=True))
         if sync_guild_ids:
@@ -408,6 +635,63 @@ class GlobalModBot(commands.Bot):
                 response_text += f"\nLog channel notice: {log_notice}"
             await interaction.edit_original_response(
                 content=response_text
+            )
+
+        @self.tree.command(
+            name="gbanrequest",
+            description="Submit a global ban request for owner review.",
+        )
+        @app_commands.guild_only()
+        @app_commands.describe(
+            user="User to request a global ban for",
+            reason="Reason for the global ban request",
+            proof="Proof link or explanation for the request",
+        )
+        async def gbanrequest(
+            interaction: discord.Interaction,
+            user: discord.User,
+            reason: str,
+            proof: str,
+        ) -> None:
+            if not await self.ensure_access(interaction, "ban_members"):
+                return
+
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            normalized_reason = normalize_reason(reason)
+            normalized_proof = proof.strip() or "No proof provided"
+            request_id = uuid4().hex[:12]
+            request = {
+                "request_id": request_id,
+                "user_id": str(user.id),
+                "requester_id": str(interaction.user.id),
+                "requester_tag": str(interaction.user),
+                "request_guild_id": str(interaction.guild_id or "unknown"),
+                "request_guild_name": interaction.guild.name if interaction.guild else "Unknown Server",
+                "reason": normalized_reason,
+                "proof": normalized_proof[:1024],
+                "created_at": utc_now_iso(),
+                "status": "pending",
+                "request_message_id": None,
+            }
+            self.store.set_global_ban_request(request_id, request)
+            message, error = await self.send_global_ban_request(request)
+            if error is not None or message is None:
+                self.store.remove_global_ban_request(request_id)
+                await interaction.edit_original_response(
+                    content=f"Could not submit the global ban request: {error or 'Unknown error'}"
+                )
+                return
+
+            updated_request = self.store.update_global_ban_request(
+                request_id,
+                request_message_id=str(message.id),
+            )
+            assert updated_request is not None
+            await interaction.edit_original_response(
+                content=(
+                    f"Submitted a global ban request for <@{user.id}>.\n"
+                    f"Request ID: `{request_id}`"
+                )
             )
 
         @self.tree.command(name="ungban", description="Remove a user ID from the global ban list and unban them.")
@@ -903,6 +1187,31 @@ class GlobalModBot(commands.Bot):
             return None
         except Exception as error:
             return summarize_exception(error)
+
+    async def send_global_ban_request(
+        self, request: dict
+    ) -> tuple[Optional[discord.Message], Optional[str]]:
+        channel_id = self.config.global_ban_log_channel_id
+        if channel_id is None:
+            return None, "GLOBAL_BAN_LOG_CHANNEL_ID is not configured."
+
+        channel = self.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.fetch_channel(channel_id)
+            except Exception as error:
+                return None, summarize_exception(error)
+
+        if not hasattr(channel, "send"):
+            return None, "Configured global ban log channel is not messageable."
+
+        view = GlobalBanRequestView(self, request["request_id"])
+        embed = build_global_ban_request_embed(request)
+        try:
+            message = await channel.send(embed=embed, view=view)
+            return message, None
+        except Exception as error:
+            return None, summarize_exception(error)
 
     async def apply_global_ban_everywhere(
         self, user_id: int, entry: dict
