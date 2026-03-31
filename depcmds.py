@@ -479,11 +479,22 @@ async def ensure_department_command_roles(
     if not required_role_ids:
         return True
 
-    moderator_member = await bot.get_member_if_present(target_guild, interaction.user.id)
+    access_guild = bot.get_department_access_guild(
+        interaction.guild.id if interaction.guild is not None else None,
+        target_guild.id,
+    )
+    if access_guild is None:
+        await bot.send_ephemeral(
+            interaction,
+            "I could not resolve the command access server for this department command.",
+        )
+        return False
+
+    moderator_member = await bot.get_member_if_present(access_guild, interaction.user.id)
     if moderator_member is None:
         await bot.send_ephemeral(
             interaction,
-            f"You must be a member of **{target_guild.name}** to use {department.label} commands.",
+            f"You must be a member of **{access_guild.name}** to use {department.label} commands.",
         )
         return False
 
@@ -495,7 +506,7 @@ async def ensure_department_command_roles(
     missing_roles: list[discord.Role] = []
     unresolved_ids: list[int] = []
     for role_id in missing_role_ids:
-        role = target_guild.get_role(role_id)
+        role = access_guild.get_role(role_id)
         if role is None:
             unresolved_ids.append(role_id)
             continue
@@ -515,7 +526,10 @@ async def ensure_department_command_roles(
     )
     await bot.send_ephemeral(
         interaction,
-        f"You need all configured command roles for {target_label}: {missing_text}.",
+        (
+            f"You need all configured command roles for {target_label} in **{access_guild.name}**: "
+            f"{missing_text}."
+        ),
     )
     return False
 

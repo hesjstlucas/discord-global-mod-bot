@@ -845,6 +845,34 @@ class GlobalModBot(commands.Bot):
 
         return guild_ids
 
+    def get_department_access_guild(
+        self, interaction_guild_id: Optional[int], target_guild_id: Optional[int]
+    ) -> Optional[discord.Guild]:
+        candidate_ids: list[int] = []
+
+        if self.config.register_guild_id is not None:
+            candidate_ids.append(self.config.register_guild_id)
+
+        if (
+            interaction_guild_id is not None
+            and interaction_guild_id in self.config.department_command_guild_ids
+        ):
+            candidate_ids.append(interaction_guild_id)
+
+        for guild_id in sorted(self.config.department_command_guild_ids):
+            if guild_id not in candidate_ids:
+                candidate_ids.append(guild_id)
+
+        if target_guild_id is not None and target_guild_id not in candidate_ids:
+            candidate_ids.append(target_guild_id)
+
+        for guild_id in candidate_ids:
+            guild = self.get_guild(guild_id)
+            if guild is not None:
+                return guild
+
+        return None
+
     def get_target_guilds(self) -> tuple[list[discord.Guild], list[int]]:
         if not self.config.global_ban_guild_ids:
             return list(self.guilds), []
