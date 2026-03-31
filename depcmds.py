@@ -29,6 +29,22 @@ def normalize_department_key(value: str) -> str:
     return "".join(collapsed).strip("_")
 
 
+def is_fuzzy_match(query: str, candidate: str) -> bool:
+    if not query:
+        return True
+    if query in candidate:
+        return True
+
+    index = 0
+    for char in candidate:
+        if index < len(query) and char == query[index]:
+            index += 1
+            if index == len(query):
+                return True
+
+    return False
+
+
 def parse_id_set(value: object) -> set[int]:
     if not isinstance(value, list):
         return set()
@@ -132,6 +148,15 @@ class DepartmentConfig:
             if normalize_department_key(division.label) == normalized:
                 return division
 
+        fuzzy_matches = [
+            division
+            for division in self.divisions.values()
+            if is_fuzzy_match(normalized, division.key)
+            or is_fuzzy_match(normalized, normalize_department_key(division.label))
+        ]
+        if len(fuzzy_matches) == 1:
+            return fuzzy_matches[0]
+
         return None
 
 
@@ -223,6 +248,15 @@ class DepartmentRegistry:
             if normalize_department_key(department.label) == normalized:
                 return department
 
+        fuzzy_matches = [
+            department
+            for department in self.departments.values()
+            if is_fuzzy_match(normalized, department.key)
+            or is_fuzzy_match(normalized, normalize_department_key(department.label))
+        ]
+        if len(fuzzy_matches) == 1:
+            return fuzzy_matches[0]
+
         return None
 
     def autocomplete(self, current: str) -> list[app_commands.Choice[str]]:
@@ -230,8 +264,8 @@ class DepartmentRegistry:
         matches = []
 
         for department in self.departments.values():
-            if not normalized or normalized in department.key or normalized in normalize_department_key(
-                department.label
+            if is_fuzzy_match(normalized, department.key) or is_fuzzy_match(
+                normalized, normalize_department_key(department.label)
             ):
                 matches.append(
                     app_commands.Choice(name=department.label[:100], value=department.key)
@@ -471,8 +505,8 @@ async def autocomplete_division(
     normalized = normalize_department_key(current)
     matches = []
     for division in department.divisions.values():
-        if not normalized or normalized in division.key or normalized in normalize_department_key(
-            division.label
+        if is_fuzzy_match(normalized, division.key) or is_fuzzy_match(
+            normalized, normalize_department_key(division.label)
         ):
             matches.append(app_commands.Choice(name=division.label[:100], value=division.key))
 
@@ -517,7 +551,7 @@ async def autocomplete_department_role(
                 continue
 
             seen_role_ids.add(role_id)
-            if current_lower and current_lower not in role.name.lower():
+            if current_lower and not is_fuzzy_match(current_lower, role.name.lower()):
                 continue
 
             matches.append(app_commands.Choice(name=role.name[:100], value=str(role.id)))
@@ -569,7 +603,7 @@ async def autocomplete_division_role(
                 continue
 
             seen_role_ids.add(role_id)
-            if current_lower and current_lower not in role.name.lower():
+            if current_lower and not is_fuzzy_match(current_lower, role.name.lower()):
                 continue
 
             matches.append(app_commands.Choice(name=role.name[:100], value=str(role.id)))
