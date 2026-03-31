@@ -308,6 +308,7 @@ class BotConfig:
     mod_role_ids: set[int]
     global_ban_guild_ids: set[int]
     global_ban_log_channel_id: Optional[int]
+    global_ban_request_ping_user_id: Optional[int]
     department_log_mirror_channel_id: Optional[int]
     global_message_channel_map: dict[int, int]
     departments_config_path: Path
@@ -327,6 +328,9 @@ class BotConfig:
             mod_role_ids=split_csv(os.getenv("MOD_ROLE_IDS", "")),
             global_ban_guild_ids=split_csv(os.getenv("GLOBAL_BAN_GUILD_IDS", "")),
             global_ban_log_channel_id=parse_optional_id(os.getenv("GLOBAL_BAN_LOG_CHANNEL_ID", "")),
+            global_ban_request_ping_user_id=parse_optional_id(
+                os.getenv("GLOBAL_BAN_REQUEST_PING_USER_ID", "")
+            ),
             department_log_mirror_channel_id=parse_optional_id(
                 os.getenv("DEPARTMENT_LOG_MIRROR_CHANNEL_ID", "")
             ),
@@ -1244,8 +1248,16 @@ class GlobalModBot(commands.Bot):
 
         view = GlobalBanRequestView(self, request["request_id"])
         embed = build_global_ban_request_embed(request)
+        content = None
+        if self.config.global_ban_request_ping_user_id is not None:
+            content = f"<@{self.config.global_ban_request_ping_user_id}>"
         try:
-            message = await channel.send(embed=embed, view=view)
+            message = await channel.send(
+                content=content,
+                embed=embed,
+                view=view,
+                allowed_mentions=discord.AllowedMentions(users=True),
+            )
             return message, None
         except Exception as error:
             return None, summarize_exception(error)

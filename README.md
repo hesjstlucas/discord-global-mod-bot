@@ -91,6 +91,7 @@ OWNER_USER_IDS=
 MOD_ROLE_IDS=
 GLOBAL_BAN_GUILD_IDS=
 GLOBAL_BAN_LOG_CHANNEL_ID=
+GLOBAL_BAN_REQUEST_PING_USER_ID=
 DEPARTMENT_LOG_MIRROR_CHANNEL_ID=
 GLOBAL_MESSAGE_CHANNEL_MAP=
 DEPARTMENTS_CONFIG_PATH=departments.json
@@ -117,6 +118,7 @@ Then:
 - Purge skips messages older than 14 days because Discord bulk delete does.
 - `GLOBAL_BAN_GUILD_IDS` can contain comma-separated server IDs. If set, global ban commands only apply to those servers.
 - `GLOBAL_BAN_LOG_CHANNEL_ID` can point to a channel in your main server where `/gban`, `/ungban`, and `/syncgbans` actions are logged.
+- `GLOBAL_BAN_REQUEST_PING_USER_ID` can point to one user ID to ping whenever `/gbanrequest` is submitted.
 - `DEPARTMENT_LOG_MIRROR_CHANNEL_ID` can point to a channel in your main server where every department log embed is mirrored, while the original department logs still post in their existing department channels.
 - `/gbanrequest` also posts approval requests to that same channel, and only `OWNER_USER_IDS` can approve or deny them.
 - `/gbanrequest` requires a proof file upload. Image uploads preview in the owner review embed.
