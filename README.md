@@ -100,6 +100,8 @@ DEPARTMENT_LOG_MIRROR_CHANNEL_ID=
 TICKET_GUILD_ID=
 TICKET_PANEL_CHANNEL_ID=
 TICKET_CATEGORY_ID=
+TICKET_GENERAL_CATEGORY_ID=
+TICKET_HIGHRANK_CATEGORY_ID=
 TICKET_LOG_CHANNEL_ID=
 TICKET_GENERAL_SUPPORT_ROLE_IDS=
 TICKET_HIGHRANK_SUPPORT_ROLE_IDS=
@@ -139,7 +141,9 @@ Then:
 - `/gbanrequest` requires a proof file upload. Image uploads preview in the owner review embed.
 - `TICKET_GUILD_ID` defaults to `REGISTER_GUILD_ID` if you leave it blank.
 - `TICKET_PANEL_CHANNEL_ID` is where `/ticket panel` posts by default if you do not pass a channel.
-- `TICKET_CATEGORY_ID` is the category where new ticket channels are created.
+- `TICKET_CATEGORY_ID` is the fallback category for new tickets if you do not set queue-specific categories.
+- `TICKET_GENERAL_CATEGORY_ID` is the category for `General Support` tickets.
+- `TICKET_HIGHRANK_CATEGORY_ID` is the category for `Highrank Support` tickets.
 - `TICKET_LOG_CHANNEL_ID` is optional and receives open, claim, unclaim, escalate, and close logs.
 - `TICKET_GENERAL_SUPPORT_ROLE_IDS` and `TICKET_HIGHRANK_SUPPORT_ROLE_IDS` control who can see each queue and who gets pinged when tickets are opened or escalated.
 - `TICKET_PANEL_BANNER_URL` and `TICKET_CHANNEL_IMAGE_URL` let you style the panel and ticket embed like your screenshots.
@@ -153,9 +157,10 @@ Then:
 - `/ticket panel` posts a support panel with `General Support` and `Highrank Support` options.
 - Opening a ticket creates a private channel for the opener, the bot, and the configured support roles for that queue.
 - Ticket channels include `Claim Ticket`, `Unclaim Ticket`, and `Close Ticket` buttons.
+- `Unclaim Ticket` only works for the person who currently claimed the ticket.
 - `/ticket request` pings the ticket opener and asks whether they still need help. `Accept` keeps the ticket open. `Deny` closes it.
 - `/ticket close` opens a modal asking for the close reason, then deletes the ticket channel after a short delay.
-- `/ticket escalate` moves the ticket between `General Support` and `Highrank Support` and pings the new queue.
+- `/ticket escalate` moves the ticket between `General Support` and `Highrank Support`, pings the new queue, and moves the channel into the matching ticket category when configured.
 
 ## Department Commands
 

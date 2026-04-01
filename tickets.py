@@ -162,6 +162,14 @@ def build_role_mentions(role_ids: set[int]) -> Optional[str]:
     return " ".join(f"<@&{role_id}>" for role_id in sorted(role_ids))
 
 
+def get_ticket_category_id(bot: GlobalModBot, queue_key: str) -> Optional[int]:
+    if queue_key == TICKET_QUEUE_GENERAL and bot.config.ticket_general_category_id is not None:
+        return bot.config.ticket_general_category_id
+    if queue_key == TICKET_QUEUE_HIGHRANK and bot.config.ticket_highrank_category_id is not None:
+        return bot.config.ticket_highrank_category_id
+    return bot.config.ticket_category_id
+
+
 def ticket_channel_allow() -> discord.PermissionOverwrite:
     return discord.PermissionOverwrite(
         view_channel=True,
@@ -337,11 +345,12 @@ async def create_ticket_for_user(
         overwrites[role] = ticket_channel_allow() if role_id in queue.support_role_ids else ticket_channel_deny()
 
     category = None
-    if bot.config.ticket_category_id is not None:
-        maybe_category = guild.get_channel(bot.config.ticket_category_id)
+    category_id = get_ticket_category_id(bot, queue.key)
+    if category_id is not None:
+        maybe_category = guild.get_channel(category_id)
         if maybe_category is None:
             try:
-                maybe_category = await guild.fetch_channel(bot.config.ticket_category_id)
+                maybe_category = await guild.fetch_channel(category_id)
             except Exception:
                 maybe_category = None
         if isinstance(maybe_category, discord.CategoryChannel):
@@ -571,6 +580,19 @@ class TicketControlView(discord.ui.View):
             return
 
         previous_claimant_id = ticket.get("claimed_by_id")
+        if not previous_claimant_id:
+            await interaction.response.send_message(
+                "This ticket is not currently claimed.",
+                ephemeral=True,
+            )
+            return
+        if str(interaction.user.id) != str(previous_claimant_id):
+            await interaction.response.send_message(
+                "Only the current claimant can unclaim this ticket.",
+                ephemeral=True,
+            )
+            return
+
         updated = self.bot.store.update_ticket(
             self.channel_id,
             claimed_by_id=None,
@@ -845,6 +867,25 @@ def register_ticket_commands(bot: GlobalModBot) -> None:
             queue_label=queue.label,
         )
         assert updated is not None
+        category_id = get_ticket_category_id(bot, queue.key)
+        if category_id is not None:
+            maybe_category = channel.guild.get_channel(category_id)
+            if maybe_category is None:
+                try:
+                    maybe_category = await channel.guild.fetch_channel(category_id)
+                except Exception:
+                    maybe_category = None
+            if isinstance(maybe_category, discord.CategoryChannel) and channel.category_id != maybe_category.id:
+                try:
+                    await channel.edit(
+                        category=maybe_category,
+                        reason=f"Ticket escalated to {queue.label} by {interaction.user.id}"[:512],
+                    )
+                except Exception as error:
+                    await interaction.edit_original_response(
+                        content=f"Escalated queue, but could not move the channel category: {error}"
+                    )
+                    return
         await sync_ticket_channel_permissions(bot, channel, updated)
         await update_ticket_control_message(bot, channel, updated)
 

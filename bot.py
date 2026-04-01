@@ -314,6 +314,8 @@ class BotConfig:
     ticket_guild_id: Optional[int]
     ticket_panel_channel_id: Optional[int]
     ticket_category_id: Optional[int]
+    ticket_general_category_id: Optional[int]
+    ticket_highrank_category_id: Optional[int]
     ticket_log_channel_id: Optional[int]
     ticket_general_support_role_ids: set[int]
     ticket_highrank_support_role_ids: set[int]
@@ -348,6 +350,12 @@ class BotConfig:
             ticket_guild_id=parse_optional_id(os.getenv("TICKET_GUILD_ID", "")),
             ticket_panel_channel_id=parse_optional_id(os.getenv("TICKET_PANEL_CHANNEL_ID", "")),
             ticket_category_id=parse_optional_id(os.getenv("TICKET_CATEGORY_ID", "")),
+            ticket_general_category_id=parse_optional_id(
+                os.getenv("TICKET_GENERAL_CATEGORY_ID", "")
+            ),
+            ticket_highrank_category_id=parse_optional_id(
+                os.getenv("TICKET_HIGHRANK_CATEGORY_ID", "")
+            ),
             ticket_log_channel_id=parse_optional_id(os.getenv("TICKET_LOG_CHANNEL_ID", "")),
             ticket_general_support_role_ids=split_csv(
                 os.getenv("TICKET_GENERAL_SUPPORT_ROLE_IDS", "")
