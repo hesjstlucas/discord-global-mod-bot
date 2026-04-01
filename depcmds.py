@@ -804,6 +804,15 @@ def register_department_commands(bot: GlobalModBot) -> None:
         if mirror_error is not None:
             message += f"\nMain server log notice: {mirror_error}"
 
+        bot.store.add_moderation_event(
+            user_id=target_member.id,
+            guild_id=target_guild.id,
+            action="kick",
+            source="department",
+            moderator_id=interaction.user.id,
+            reason=reason,
+        )
+
         await interaction.edit_original_response(content=message)
 
     @dep_group.command(name="ban", description="Ban a member from a department.")
@@ -888,6 +897,15 @@ def register_department_commands(bot: GlobalModBot) -> None:
             message += f"\nLog channel notice: {log_error}"
         if mirror_error is not None:
             message += f"\nMain server log notice: {mirror_error}"
+
+        bot.store.add_moderation_event(
+            user_id=member.id,
+            guild_id=target_guild.id,
+            action="ban",
+            source="department",
+            moderator_id=interaction.user.id,
+            reason=reason,
+        )
 
         await interaction.edit_original_response(content=message)
 
@@ -1000,6 +1018,25 @@ def register_department_commands(bot: GlobalModBot) -> None:
             message += f"\nLog channel notice: {log_error}"
         if mirror_error is not None:
             message += f"\nMain server log notice: {mirror_error}"
+
+        if action_value in {"warn", "strike"}:
+            bot.store.add_moderation_event(
+                user_id=target_member.id,
+                guild_id=target_guild.id,
+                action="warn",
+                source="department",
+                moderator_id=interaction.user.id,
+                reason=reason,
+            )
+        elif action_value == "terminate":
+            bot.store.add_moderation_event(
+                user_id=target_member.id,
+                guild_id=target_guild.id,
+                action="kick",
+                source="department",
+                moderator_id=interaction.user.id,
+                reason=reason,
+            )
 
         await interaction.edit_original_response(content=message)
 

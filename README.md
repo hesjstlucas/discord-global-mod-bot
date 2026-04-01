@@ -112,6 +112,9 @@ TICKET_CHANNEL_IMAGE_URL=
 GLOBAL_MESSAGE_CHANNEL_MAP=
 DEPARTMENTS_CONFIG_PATH=departments.json
 DATA_FILE_PATH=/app/data/moderation-store.json
+PROFILE_API_TOKEN=shared-secret-for-community-profile-stats
+PROFILE_API_HOST=0.0.0.0
+PROFILE_API_PORT=
 ```
 
 Then:
@@ -139,6 +142,8 @@ Then:
 - `DEPARTMENT_LOG_MIRROR_CHANNEL_ID` can point to a channel in your main server where every department log embed is mirrored, while the original department logs still post in their existing department channels.
 - `/gbanrequest` also posts approval requests to that same channel, and only `OWNER_USER_IDS` can approve or deny them.
 - `/gbanrequest` requires a proof file upload. Image uploads preview in the owner review embed.
+- `PROFILE_API_TOKEN` turns on a tiny read-only HTTP endpoint at `/profile-stats` so another bot can request a member's ban, kick, warn, and mute totals.
+- `PROFILE_API_PORT` defaults to Railway's `PORT` when available. Set `PROFILE_API_TOKEN` on this bot and the matching token on the community bot.
 - `TICKET_GUILD_ID` defaults to `REGISTER_GUILD_ID` if you leave it blank.
 - `TICKET_PANEL_CHANNEL_ID` is where `/ticket panel` posts by default if you do not pass a channel.
 - `TICKET_CATEGORY_ID` is the fallback category for new tickets if you do not set queue-specific categories.

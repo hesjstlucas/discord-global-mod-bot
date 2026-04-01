@@ -1,8 +1,11 @@
 import json
 import os
 import re
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
@@ -326,6 +329,9 @@ class BotConfig:
     global_message_channel_map: dict[int, int]
     departments_config_path: Path
     data_file_path: Path
+    profile_api_token: Optional[str]
+    profile_api_host: str
+    profile_api_port: Optional[int]
 
     @classmethod
     def from_env(cls) -> "BotConfig":
@@ -383,6 +389,11 @@ class BotConfig:
                 os.getenv("DATA_FILE_PATH", "data/moderation-store.json").strip()
                 or "data/moderation-store.json"
             ),
+            profile_api_token=(os.getenv("PROFILE_API_TOKEN", "").strip() or None),
+            profile_api_host=os.getenv("PROFILE_API_HOST", "").strip() or "0.0.0.0",
+            profile_api_port=parse_optional_id(
+                os.getenv("PROFILE_API_PORT", "").strip() or os.getenv("PORT", "").strip()
+            ),
         )
 
 
@@ -392,6 +403,7 @@ class ModerationStore:
         self.data = {
             "global_bans": {},
             "global_ban_requests": {},
+            "moderation_events": [],
             "tickets": {},
             "ticket_requests": {},
             "ticket_counter": 0,
@@ -412,6 +424,9 @@ class ModerationStore:
         global_ban_requests = payload.get("global_ban_requests", {})
         if not isinstance(global_ban_requests, dict):
             global_ban_requests = {}
+        moderation_events = payload.get("moderation_events", [])
+        if not isinstance(moderation_events, list):
+            moderation_events = []
         tickets = payload.get("tickets", {})
         if not isinstance(tickets, dict):
             tickets = {}
@@ -424,6 +439,7 @@ class ModerationStore:
         self.data = {
             "global_bans": global_bans,
             "global_ban_requests": global_ban_requests,
+            "moderation_events": moderation_events,
             "tickets": tickets,
             "ticket_requests": ticket_requests,
             "ticket_counter": ticket_counter,
@@ -486,6 +502,55 @@ class ModerationStore:
         if removed is not None:
             self.save()
         return removed
+
+    def add_moderation_event(
+        self,
+        *,
+        user_id: int,
+        guild_id: Optional[int],
+        action: str,
+        source: str,
+        moderator_id: Optional[int],
+        reason: str,
+    ) -> None:
+        self.data.setdefault("moderation_events", []).append(
+            {
+                "user_id": str(user_id),
+                "guild_id": str(guild_id) if guild_id is not None else None,
+                "action": action,
+                "source": source,
+                "moderator_id": str(moderator_id) if moderator_id is not None else None,
+                "reason": reason[:512],
+                "created_at": utc_now_iso(),
+            }
+        )
+        self.save()
+
+    def get_profile_stats(self, user_id: int, guild_id: Optional[int]) -> dict[str, int]:
+        counts = {"bans": 0, "kicks": 0, "warns": 0, "mutes": 0}
+        guild_id_text = str(guild_id) if guild_id is not None else None
+
+        for event in self.data.get("moderation_events", []):
+            if not isinstance(event, dict):
+                continue
+            if str(event.get("user_id", "")) != str(user_id):
+                continue
+
+            event_guild_id = event.get("guild_id")
+            if guild_id_text is not None and event_guild_id not in {guild_id_text, None}:
+                continue
+
+            action = str(event.get("action", "")).strip().lower()
+            if action == "ban":
+                counts["bans"] += 1
+            elif action == "kick":
+                counts["kicks"] += 1
+            elif action == "warn":
+                counts["warns"] += 1
+            elif action == "mute":
+                counts["mutes"] += 1
+
+        return counts
 
     def next_ticket_number(self) -> int:
         self.data["ticket_counter"] = int(self.data.get("ticket_counter", 0)) + 1
@@ -648,6 +713,15 @@ class GlobalBanRequestView(discord.ui.View):
             }
             already_banned = self.bot.store.get_global_ban(int(request["user_id"])) is not None
             self.bot.store.set_global_ban(int(request["user_id"]), entry)
+            if not already_banned:
+                self.bot.store.add_moderation_event(
+                    user_id=int(request["user_id"]),
+                    guild_id=None,
+                    action="ban",
+                    source="global_request",
+                    moderator_id=interaction.user.id,
+                    reason=request["reason"],
+                )
             results, targeted_guilds, missing_guild_ids = await self.bot.apply_global_ban_everywhere(
                 int(request["user_id"]), entry
             )
@@ -684,6 +758,55 @@ class GlobalBanRequestView(discord.ui.View):
         )
 
 
+def build_profile_api_handler(store: ModerationStore, token: str):
+    class ProfileApiHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path.split("?", 1)[0] != "/profile-stats":
+                self._write_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                return
+
+            auth_header = self.headers.get("Authorization", "")
+            if auth_header != f"Bearer {token}":
+                self._write_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
+
+            query_text = self.path.split("?", 1)[1] if "?" in self.path else ""
+            pairs = [item.split("=", 1) for item in query_text.split("&") if item]
+            query = {key: value for key, value in pairs if key}
+
+            user_id = query.get("user_id", "").strip()
+            guild_id = query.get("guild_id", "").strip()
+            if not user_id.isdigit():
+                self._write_json(HTTPStatus.BAD_REQUEST, {"error": "user_id is required"})
+                return
+
+            stats = store.get_profile_stats(
+                int(user_id),
+                int(guild_id) if guild_id.isdigit() else None,
+            )
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "user_id": user_id,
+                    "guild_id": guild_id or None,
+                    "stats": stats,
+                },
+            )
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+        def _write_json(self, status: HTTPStatus, payload: dict) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(status.value)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    return ProfileApiHandler
+
+
 class GlobalModBot(commands.Bot):
     def __init__(self, config: BotConfig, store: ModerationStore) -> None:
         intents = discord.Intents.none()
@@ -698,12 +821,16 @@ class GlobalModBot(commands.Bot):
             config.departments_config_path
         )
         self._commands_registered = False
+        self._profile_api_server: Optional[ThreadingHTTPServer] = None
+        self._profile_api_thread: Optional[threading.Thread] = None
         self.tree.on_error = self.on_app_command_error
 
     async def setup_hook(self) -> None:
         if not self._commands_registered:
             self.register_commands()
             self._commands_registered = True
+
+        self.start_profile_api_server()
 
         register_ticket_views(self)
         for request in self.store.list_pending_global_ban_requests():
@@ -728,6 +855,32 @@ class GlobalModBot(commands.Bot):
         if self.user is None:
             return
         print(f"Logged in as {self.user} in {len(self.guilds)} guild(s).")
+
+    def start_profile_api_server(self) -> None:
+        if (
+            self._profile_api_server is not None
+            or not self.config.profile_api_token
+            or self.config.profile_api_port is None
+        ):
+            return
+
+        handler = build_profile_api_handler(self.store, self.config.profile_api_token)
+        server = ThreadingHTTPServer(
+            (self.config.profile_api_host, self.config.profile_api_port),
+            handler,
+        )
+        thread = threading.Thread(
+            target=server.serve_forever,
+            name="moderation-profile-api",
+            daemon=True,
+        )
+        thread.start()
+        self._profile_api_server = server
+        self._profile_api_thread = thread
+        print(
+            f"Moderation profile API listening on "
+            f"{self.config.profile_api_host}:{self.config.profile_api_port}."
+        )
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         if self.config.global_ban_guild_ids and guild.id not in self.config.global_ban_guild_ids:
@@ -794,6 +947,15 @@ class GlobalModBot(commands.Bot):
             }
             already_banned = self.store.get_global_ban(user.id) is not None
             self.store.set_global_ban(user.id, entry)
+            if not already_banned:
+                self.store.add_moderation_event(
+                    user_id=user.id,
+                    guild_id=None,
+                    action="ban",
+                    source="global",
+                    moderator_id=interaction.user.id,
+                    reason=normalized_reason,
+                )
             results, targeted_guilds, missing_guild_ids = await self.apply_global_ban_everywhere(
                 user.id, entry
             )
@@ -1038,6 +1200,14 @@ class GlobalModBot(commands.Bot):
                 )
                 return
 
+            self.store.add_moderation_event(
+                user_id=user.id,
+                guild_id=interaction.guild.id,
+                action="ban",
+                source="local",
+                moderator_id=interaction.user.id,
+                reason=normalize_reason(reason),
+            )
             await interaction.edit_original_response(
                 content=f"Banned <@{user.id}> from **{interaction.guild.name}**."
             )
@@ -1068,6 +1238,14 @@ class GlobalModBot(commands.Bot):
                 )
                 return
 
+            self.store.add_moderation_event(
+                user_id=user.id,
+                guild_id=user.guild.id,
+                action="kick",
+                source="local",
+                moderator_id=interaction.user.id,
+                reason=normalize_reason(reason),
+            )
             await interaction.edit_original_response(
                 content=f"Kicked <@{user.id}> from **{user.guild.name}**."
             )
@@ -1109,6 +1287,14 @@ class GlobalModBot(commands.Bot):
                 )
                 return
 
+            self.store.add_moderation_event(
+                user_id=user.id,
+                guild_id=user.guild.id,
+                action="mute",
+                source="local",
+                moderator_id=interaction.user.id,
+                reason=normalize_reason(reason),
+            )
             await interaction.edit_original_response(
                 content=f"Timed out <@{user.id}> for {format_duration(parsed)}."
             )
