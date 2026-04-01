@@ -12,6 +12,7 @@ from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 from depcmds import DepartmentRegistry, register_department_commands
+from tickets import register_ticket_commands, register_ticket_views
 
 load_dotenv()
 
@@ -310,6 +311,16 @@ class BotConfig:
     global_ban_log_channel_id: Optional[int]
     global_ban_request_ping_user_id: Optional[int]
     department_log_mirror_channel_id: Optional[int]
+    ticket_guild_id: Optional[int]
+    ticket_panel_channel_id: Optional[int]
+    ticket_category_id: Optional[int]
+    ticket_log_channel_id: Optional[int]
+    ticket_general_support_role_ids: set[int]
+    ticket_highrank_support_role_ids: set[int]
+    ticket_brand_name: str
+    ticket_footer_text: str
+    ticket_panel_banner_url: str
+    ticket_channel_image_url: str
     global_message_channel_map: dict[int, int]
     departments_config_path: Path
     data_file_path: Path
@@ -334,6 +345,25 @@ class BotConfig:
             department_log_mirror_channel_id=parse_optional_id(
                 os.getenv("DEPARTMENT_LOG_MIRROR_CHANNEL_ID", "")
             ),
+            ticket_guild_id=parse_optional_id(os.getenv("TICKET_GUILD_ID", "")),
+            ticket_panel_channel_id=parse_optional_id(os.getenv("TICKET_PANEL_CHANNEL_ID", "")),
+            ticket_category_id=parse_optional_id(os.getenv("TICKET_CATEGORY_ID", "")),
+            ticket_log_channel_id=parse_optional_id(os.getenv("TICKET_LOG_CHANNEL_ID", "")),
+            ticket_general_support_role_ids=split_csv(
+                os.getenv("TICKET_GENERAL_SUPPORT_ROLE_IDS", "")
+            ),
+            ticket_highrank_support_role_ids=split_csv(
+                os.getenv("TICKET_HIGHRANK_SUPPORT_ROLE_IDS", "")
+            ),
+            ticket_brand_name=os.getenv("TICKET_BRAND_NAME", "Oklahoma Roleplay").strip()
+            or "Oklahoma Roleplay",
+            ticket_footer_text=os.getenv(
+                "TICKET_FOOTER_TEXT",
+                "Oklahoma Roleplay Community",
+            ).strip()
+            or "Oklahoma Roleplay Community",
+            ticket_panel_banner_url=os.getenv("TICKET_PANEL_BANNER_URL", "").strip(),
+            ticket_channel_image_url=os.getenv("TICKET_CHANNEL_IMAGE_URL", "").strip(),
             global_message_channel_map=parse_guild_channel_map(
                 os.getenv("GLOBAL_MESSAGE_CHANNEL_MAP", "")
             ),
@@ -351,7 +381,13 @@ class BotConfig:
 class ModerationStore:
     def __init__(self, file_path: Path) -> None:
         self.file_path = file_path
-        self.data = {"global_bans": {}, "global_ban_requests": {}}
+        self.data = {
+            "global_bans": {},
+            "global_ban_requests": {},
+            "tickets": {},
+            "ticket_requests": {},
+            "ticket_counter": 0,
+        }
 
     def load(self) -> None:
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -368,9 +404,21 @@ class ModerationStore:
         global_ban_requests = payload.get("global_ban_requests", {})
         if not isinstance(global_ban_requests, dict):
             global_ban_requests = {}
+        tickets = payload.get("tickets", {})
+        if not isinstance(tickets, dict):
+            tickets = {}
+        ticket_requests = payload.get("ticket_requests", {})
+        if not isinstance(ticket_requests, dict):
+            ticket_requests = {}
+        ticket_counter = payload.get("ticket_counter", 0)
+        if not isinstance(ticket_counter, int) or ticket_counter < 0:
+            ticket_counter = 0
         self.data = {
             "global_bans": global_bans,
             "global_ban_requests": global_ban_requests,
+            "tickets": tickets,
+            "ticket_requests": ticket_requests,
+            "ticket_counter": ticket_counter,
         }
 
     def save(self) -> None:
@@ -430,6 +478,105 @@ class ModerationStore:
         if removed is not None:
             self.save()
         return removed
+
+    def next_ticket_number(self) -> int:
+        self.data["ticket_counter"] = int(self.data.get("ticket_counter", 0)) + 1
+        self.save()
+        return self.data["ticket_counter"]
+
+    def get_ticket(self, channel_id: int) -> Optional[dict]:
+        return self.data["tickets"].get(str(channel_id))
+
+    def list_open_tickets(self) -> list[dict]:
+        entries = [
+            ticket
+            for ticket in self.data["tickets"].values()
+            if ticket.get("status", "open") == "open"
+        ]
+        entries.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+        return entries
+
+    def find_open_ticket_by_owner(self, guild_id: int, owner_id: int) -> Optional[dict]:
+        owner_id_text = str(owner_id)
+        guild_id_text = str(guild_id)
+        for ticket in self.list_open_tickets():
+            if ticket.get("guild_id") == guild_id_text and ticket.get("owner_id") == owner_id_text:
+                return ticket
+        return None
+
+    def set_ticket(self, channel_id: int, entry: dict) -> None:
+        self.data["tickets"][str(channel_id)] = entry
+        self.save()
+
+    def update_ticket(self, channel_id: int, **updates: object) -> Optional[dict]:
+        existing = self.data["tickets"].get(str(channel_id))
+        if existing is None:
+            return None
+
+        existing.update(updates)
+        self.save()
+        return existing
+
+    def remove_ticket(self, channel_id: int) -> Optional[dict]:
+        removed = self.data["tickets"].pop(str(channel_id), None)
+        if removed is not None:
+            self.save()
+        return removed
+
+    def get_ticket_request_prompt(self, prompt_id: str) -> Optional[dict]:
+        return self.data["ticket_requests"].get(prompt_id)
+
+    def get_active_ticket_request_for_channel(self, channel_id: int) -> Optional[dict]:
+        channel_id_text = str(channel_id)
+        for prompt in self.data["ticket_requests"].values():
+            if (
+                prompt.get("channel_id") == channel_id_text
+                and prompt.get("status", "pending") == "pending"
+            ):
+                return prompt
+        return None
+
+    def list_active_ticket_requests(self) -> list[dict]:
+        entries = [
+            prompt
+            for prompt in self.data["ticket_requests"].values()
+            if prompt.get("status", "pending") == "pending"
+        ]
+        entries.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+        return entries
+
+    def set_ticket_request_prompt(self, prompt_id: str, entry: dict) -> None:
+        self.data["ticket_requests"][prompt_id] = entry
+        self.save()
+
+    def update_ticket_request_prompt(self, prompt_id: str, **updates: object) -> Optional[dict]:
+        existing = self.data["ticket_requests"].get(prompt_id)
+        if existing is None:
+            return None
+
+        existing.update(updates)
+        self.save()
+        return existing
+
+    def remove_ticket_request_prompt(self, prompt_id: str) -> Optional[dict]:
+        removed = self.data["ticket_requests"].pop(prompt_id, None)
+        if removed is not None:
+            self.save()
+        return removed
+
+    def remove_ticket_requests_for_channel(self, channel_id: int) -> None:
+        channel_id_text = str(channel_id)
+        to_remove = [
+            prompt_id
+            for prompt_id, prompt in self.data["ticket_requests"].items()
+            if prompt.get("channel_id") == channel_id_text
+        ]
+        if not to_remove:
+            return
+
+        for prompt_id in to_remove:
+            self.data["ticket_requests"].pop(prompt_id, None)
+        self.save()
 
 
 class GlobalBanRequestView(discord.ui.View):
@@ -550,10 +697,15 @@ class GlobalModBot(commands.Bot):
             self.register_commands()
             self._commands_registered = True
 
+        register_ticket_views(self)
         for request in self.store.list_pending_global_ban_requests():
             self.add_view(GlobalBanRequestView(self, request["request_id"]))
 
         sync_guild_ids = sorted(self.get_department_command_guild_ids(include_departments=True))
+        ticket_guild_id = self.get_ticket_guild_id()
+        if ticket_guild_id is not None and ticket_guild_id not in sync_guild_ids:
+            sync_guild_ids.append(ticket_guild_id)
+            sync_guild_ids.sort()
         if sync_guild_ids:
             for guild_id in sync_guild_ids:
                 guild = discord.Object(id=guild_id)
@@ -596,6 +748,11 @@ class GlobalModBot(commands.Bot):
         except Exception as error:
             print(f"Could not re-apply global ban for {member} in {member.guild.name}: {error}")
 
+    async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
+        removed = self.store.remove_ticket(channel.id)
+        if removed is not None:
+            self.store.remove_ticket_requests_for_channel(channel.id)
+
     async def on_app_command_error(
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
     ) -> None:
@@ -607,6 +764,7 @@ class GlobalModBot(commands.Bot):
             await interaction.response.send_message(message, ephemeral=True)
 
     def register_commands(self) -> None:
+        register_ticket_commands(self)
         register_department_commands(self)
 
         @self.tree.command(name="gban", description="Globally ban a user across every server this bot is in.")
@@ -1299,6 +1457,13 @@ class GlobalModBot(commands.Bot):
                     guild_ids.add(department.guild_id)
 
         return guild_ids
+
+    def get_ticket_guild_id(self) -> Optional[int]:
+        if self.config.ticket_guild_id is not None:
+            return self.config.ticket_guild_id
+        if self.config.register_guild_id is not None:
+            return self.config.register_guild_id
+        return None
 
     def get_department_access_guild(
         self, interaction_guild_id: Optional[int], target_guild_id: Optional[int]

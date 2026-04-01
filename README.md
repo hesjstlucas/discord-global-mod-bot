@@ -19,6 +19,10 @@ Discord bots do **not** receive user IP addresses from the Discord API, so a rea
 - `/gbanlist`
 - `/syncgbans`
 - `/globalmessage message`
+- `/ticket panel [channel]`
+- `/ticket request`
+- `/ticket close`
+- `/ticket escalate target`
 - `/dep kick member department reason`
 - `/dep infract member department action reason`
 - `/dep ban member department reason`
@@ -93,6 +97,16 @@ GLOBAL_BAN_GUILD_IDS=
 GLOBAL_BAN_LOG_CHANNEL_ID=
 GLOBAL_BAN_REQUEST_PING_USER_ID=
 DEPARTMENT_LOG_MIRROR_CHANNEL_ID=
+TICKET_GUILD_ID=
+TICKET_PANEL_CHANNEL_ID=
+TICKET_CATEGORY_ID=
+TICKET_LOG_CHANNEL_ID=
+TICKET_GENERAL_SUPPORT_ROLE_IDS=
+TICKET_HIGHRANK_SUPPORT_ROLE_IDS=
+TICKET_BRAND_NAME=Oklahoma Roleplay
+TICKET_FOOTER_TEXT=Oklahoma Roleplay Community
+TICKET_PANEL_BANNER_URL=
+TICKET_CHANNEL_IMAGE_URL=
 GLOBAL_MESSAGE_CHANNEL_MAP=
 DEPARTMENTS_CONFIG_PATH=departments.json
 DATA_FILE_PATH=/app/data/moderation-store.json
@@ -107,6 +121,7 @@ Then:
 ## Files
 
 - `bot.py` Bot runtime, slash commands, and global ban logic
+- `tickets.py` Ticket panel, ticket channels, buttons, and `/ticket` commands
 - `requirements.txt` Python dependencies
 
 ## Notes
@@ -122,9 +137,25 @@ Then:
 - `DEPARTMENT_LOG_MIRROR_CHANNEL_ID` can point to a channel in your main server where every department log embed is mirrored, while the original department logs still post in their existing department channels.
 - `/gbanrequest` also posts approval requests to that same channel, and only `OWNER_USER_IDS` can approve or deny them.
 - `/gbanrequest` requires a proof file upload. Image uploads preview in the owner review embed.
+- `TICKET_GUILD_ID` defaults to `REGISTER_GUILD_ID` if you leave it blank.
+- `TICKET_PANEL_CHANNEL_ID` is where `/ticket panel` posts by default if you do not pass a channel.
+- `TICKET_CATEGORY_ID` is the category where new ticket channels are created.
+- `TICKET_LOG_CHANNEL_ID` is optional and receives open, claim, unclaim, escalate, and close logs.
+- `TICKET_GENERAL_SUPPORT_ROLE_IDS` and `TICKET_HIGHRANK_SUPPORT_ROLE_IDS` control who can see each queue and who gets pinged when tickets are opened or escalated.
+- `TICKET_PANEL_BANNER_URL` and `TICKET_CHANNEL_IMAGE_URL` let you style the panel and ticket embed like your screenshots.
 - `GLOBAL_MESSAGE_CHANNEL_MAP` uses `guild_id:channel_id,guild_id:channel_id`. `/globalmessage` sends to those channels in the targeted guilds.
 - `DEPARTMENTS_CONFIG_PATH` points to the department JSON file used by `/dep` commands.
 - `DEPARTMENT_COMMAND_GUILD_IDS` can contain comma-separated main/server IDs where `/dep` commands are allowed to be run, even if the department itself belongs to another guild.
+
+## Ticket System
+
+- Ticket commands are defined in `tickets.py`.
+- `/ticket panel` posts a support panel with `General Support` and `Highrank Support` options.
+- Opening a ticket creates a private channel for the opener, the bot, and the configured support roles for that queue.
+- Ticket channels include `Claim Ticket`, `Unclaim Ticket`, and `Close Ticket` buttons.
+- `/ticket request` pings the ticket opener and asks whether they still need help. `Accept` keeps the ticket open. `Deny` closes it.
+- `/ticket close` opens a modal asking for the close reason, then deletes the ticket channel after a short delay.
+- `/ticket escalate` moves the ticket between `General Support` and `Highrank Support` and pings the new queue.
 
 ## Department Commands
 
