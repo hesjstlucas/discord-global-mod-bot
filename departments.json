@@ -123,7 +123,7 @@
       "termination_floor_role_id": 1488260465858449528
     },
     "ohp": {
-      "label": "OKCHP",
+      "label": "OHP",
       "guild_id": 1485378471583678664,
        "command_role_ids": [
         1451915380409765914,
